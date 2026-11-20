@@ -20,7 +20,10 @@ description: 每晚從規則篩出的候選股中，查新聞與重大訊息，�
 6. 寫入：
    - `results/agent_picks_log.csv`：每檔一列（pick_date, signal_date, stock_id, name, industry, source, close, hist_win, hist_score, verdict 推薦/否決, reason, risk, news 連結, reviewer）。同一天重跑時先刪掉當天的舊列再寫；**過去的列不可修改**。
    - `results/agent_picks/YYYY-MM-DD.md`：給人看的版本，每檔「數據／新聞（附連結）／風險」，加否決表和一段大盤背景。
-7. `python3 -m twscreener.notify` 會把推薦放在推播最前面。
+7. `python3 -m twscreener.levels`：幫推薦算停損價和 30/60/90/120 日目標價 → `results/agent_levels_today.csv`，也把這些價位寫進當天的 md。
+   - 停損＝同組歷史訊號中，最後 60 日賺錢的那些在持有期間最深跌幅的第 20 百分位（八成賺錢的交易沒跌破）。
+   - 目標＝同組該期間報酬中位數；樂觀＝第 75 百分位。樣本不足（策略 30 筆、恐慌誤殺 100 筆）就改用同來源全部訊號，並在依據欄註明。
+8. `python3 -m twscreener.notify` 會把推薦（含停損、目標）放在推播最前面。
 
 ## 驗收
 

@@ -58,8 +58,40 @@ def chat_id():
     return cid
 
 
+SEP = "━━━━━━━━━━━━"
+CIRCLE = "①②③④⑤⑥⑦⑧⑨"
+e = lambda x: html.escape(str(x))
+
+
+def price(v):
+    """台股價位：100 元以上取整數，以下取一位小數。"""
+    if pd.isna(v):
+        return "-"
+    return f"{v:,.0f}" if v >= 100 else f"{v:.1f}"
+
+
+def short(text, n=2):
+    """理由只留前幾段（用；分隔），手機上比較好讀。"""
+    parts = [t for t in str(text).split("；") if t and t != "nan"]
+    return "；".join(parts[:n])
+
+
+def market_line():
+    path = RESULTS / "candidates_today.csv"
+    if not path.exists():
+        return None
+    c = pd.read_csv(path)
+    regime = c["大盤狀態"].iat[0] if "大盤狀態" in c and len(c) else None
+    try:
+        from .review import market_context
+        dd = market_context()["大盤離高點"].dropna().iat[-1]
+        return f"大盤：<b>{e(regime)}</b>（距 120 日高點 {dd:+.0%}）"
+    except Exception:
+        return f"大盤：<b>{e(regime)}</b>" if regime else None
+
+
 def agent_section():
-    """有今天的 agent 推薦就放在最前面（results/agent_picks_log.csv）。"""
+    """今天的 agent 推薦（results/agent_picks_log.csv），附停損與目標價。"""
     path = RESULTS / "agent_picks_log.csv"
     if not path.exists():
         return []
@@ -67,41 +99,62 @@ def agent_section():
     if log.empty:
         return []
     day = log["pick_date"].max()
-    picks = log[(log["pick_date"] == day) & (log["verdict"] == "推薦")]
+    today = log[log["pick_date"] == day]
+    picks = today[today["verdict"] == "推薦"]
     if picks.empty:
         return []
-    lines = [f"🤖 <b>今日推薦</b>（{day}，數據＋新聞綜合判斷）"]
-    for i, r in enumerate(picks.itertuples(), 1):
-        lines.append(f"{i}. <b>{html.escape(r.name)} {r.stock_id}</b>［{html.escape(str(r.industry))}］收 {r.close:g}")
-        lines.append(f"   依據：{html.escape(str(r.reason))}")
-        lines.append(f"   風險：{html.escape(str(r.risk))}")
-    vetoed = log[(log["pick_date"] == day) & (log["verdict"] == "否決")]
+    lv = {}
+    lpath = RESULTS / "agent_levels_today.csv"
+    if lpath.exists():
+        lt = pd.read_csv(lpath, dtype={"stock_id": str})
+        lv = {r["stock_id"]: r for _, r in lt[lt["pick_date"] == day].iterrows()}
+    lines = [SEP, f"🤖 <b>今日推薦 {len(picks)} 檔</b>"]
+    for i, r in enumerate(picks.itertuples()):
+        lines += ["", f"{CIRCLE[i]} <b>{e(r.name)} {r.stock_id}</b>｜{e(r.industry)}", f"收盤 {price(r.close)}"]
+        x = lv.get(r.stock_id)
+        if x is not None:
+            stop = x["停損價"]
+            lines.append(f"🎯 60日目標 <b>{price(x['60日目標價'])}</b>（樂觀 {price(x['60日停利價'])}）")
+            lines.append(f"🛑 停損 <b>{price(stop)}</b>（{stop / r.close - 1:+.0%}）")
+            lines.append("📅 " + "｜".join(f"{h}日 {price(x[f'{h}日目標價'])}" for h in (30, 90, 120)))
+        lines.append(f"✅ {e(short(r.reason))}")
+        lines.append(f"⚠️ {e(short(r.risk, 1))}")
+    vetoed = today[today["verdict"] == "否決"]
     if len(vetoed):
-        lines.append(f"否決 {len(vetoed)} 檔（詳見看板）：" + "、".join(vetoed["name"].head(8)))
-    lines.append("")
+        lines += ["", f"❌ <b>否決 {len(vetoed)} 檔</b>"]
+        for reason, g in vetoed.groupby("reason", sort=False):
+            lines.append(f"・{e('、'.join(g['name']))}：{e(short(reason, 1))}")
+    if lv:
+        lines += ["", "<i>目標＝同組歷史報酬中位數，樂觀＝前 25%；停損＝八成賺錢的歷史訊號都沒跌破的價位</i>"]
+    return lines
+
+
+def signals_section(picks):
+    lines = [SEP, f"📊 <b>各策略訊號</b>（{len(picks)} 檔次）"]
+    for strategy, g in picks.groupby("strategy", sort=False):
+        label = strategy.split("_", 1)[-1]
+        win = g["win60"].dropna()
+        tag = f"（歷史勝率 {win.mean():.0%}）" if len(win) else ""
+        names = "、".join(g["name"].astype(str))
+        lines.append(f"・<b>{e(label)}</b>{tag}：{e(names)}")
     return lines
 
 
 def build_message():
     path = RESULTS / "picks_today.csv"
     picks = pd.read_csv(path, dtype={"stock_id": str}) if path.exists() else pd.DataFrame()
+    day = picks["date"].iat[0] if len(picks) else ""
+    lines = [f"📈 <b>台股選股日報</b>　{day} 收盤"]
+    m = market_line()
+    if m:
+        lines.append(m)
+    lines += agent_section()
     if picks.empty:
-        return "📊 <b>台股選股看板</b>\n今天沒有股票符合條件。\n\n" + f'<a href="{DASHBOARD_URL}">打開看板</a>'
-    day = picks["date"].iat[0]
-    lines = agent_section() + [f"📊 <b>各策略訊號 {day}</b>（共 {len(picks)} 檔次）"]
-    for strategy, g in picks.groupby("strategy", sort=False):
-        label = strategy.split("_", 1)[-1]
-        win = g["win60"].dropna()
-        head = f"\n<b>{html.escape(label)}</b>"
-        if len(win):
-            head += f"　歷史 60 日勝率 {win.mean():.0%}"
-        lines.append(head)
-        for _, r in g.iterrows():
-            ind = r.get("industry")
-            ind = f"［{html.escape(str(ind))}］" if isinstance(ind, str) and ind else ""
-            lines.append(f"• {html.escape(str(r['name']))} {r['stock_id']}{ind}　收 {r['close']:g}")
-    lines.append("\n勝率是過去的統計，不保證未來。")
-    lines.append(f'<a href="{DASHBOARD_URL}">打開看板看走勢圖和說明</a>')
+        lines += [SEP, "今天沒有股票符合條件。"]
+    else:
+        lines += signals_section(picks)
+    lines += [SEP, f'👉 <a href="{DASHBOARD_URL}">打開看板</a>：走勢圖、完整理由與新聞連結',
+              "<i>歷史統計加新聞判斷，不保證未來，請自行評估部位。</i>"]
     return "\n".join(lines)
 
 
