@@ -9,6 +9,7 @@
 - 保守目標 = 中位數
 停損參考（不分期間）= 最後在 60 日賺錢的那些訊號，持有期間「最深跌幅」的第 20 百分位：
   八成會賺錢的交易都沒跌破這裡，跌破代表多半是看錯了。
+  市況很亂時再放寬到「近 20 日平均單日波動 × 3」，取兩者較寬的。
 歷史統計，不保證未來；價格用訊號日收盤價換算。
 """
 import numpy as np
@@ -21,6 +22,7 @@ from .review import market_context
 
 HORIZONS = [30, 60, 90, 120]
 MIN_N = 30
+VOL_MULT = 3
 MIN_N_OVERSOLD = 100  # 急跌次數少，同組樣本要多一點才用，不然用全部誤殺候選（較保守）
 
 
@@ -113,6 +115,12 @@ def levels_for(picks):
         lv["stock_id"], lv["name"], lv["close"], lv["依據組別"] = p["stock_id"], p["name"], p["close"], label
         rows.append(lv)
     out = pd.DataFrame(rows)
+    # 依近期波動放寬停損：至少留「近 20 日平均單日波動 × 3」的空間，避免恐慌盤一天就被洗出場
+    vol = close.pct_change(fill_method=None).abs().iloc[-20:].mean()
+    out["近20日平均波動"] = out["stock_id"].map(vol)
+    out["歷史停損"] = out["停損"]
+    out["停損"] = np.minimum(out["停損"], -VOL_MULT * out["近20日平均波動"].fillna(0))
+    out["停損依據"] = np.where(out["停損"] < out["歷史停損"], "依近期波動放寬", "歷史統計")
     out["停損價"] = (out["close"] * (1 + out["停損"])).round(2)
     for h in HORIZONS:
         out[f"{h}日目標價"] = (out["close"] * (1 + out[f"{h}日中位數"] + COST)).round(2)

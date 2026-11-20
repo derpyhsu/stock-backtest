@@ -115,7 +115,8 @@ def agent_section():
         if x is not None:
             stop = x["停損價"]
             lines.append(f"🎯 60日目標 <b>{price(x['60日目標價'])}</b>（樂觀 {price(x['60日停利價'])}）")
-            lines.append(f"🛑 停損 <b>{price(stop)}</b>（{stop / r.close - 1:+.0%}）")
+            how = "，依近期波動放寬" if str(x.get("停損依據", "")) == "依近期波動放寬" else ""
+            lines.append(f"🛑 停損 <b>{price(stop)}</b>（{stop / r.close - 1:+.0%}{how}）")
             lines.append("📅 " + "｜".join(f"{h}日 {price(x[f'{h}日目標價'])}" for h in (30, 90, 120)))
         lines.append(f"✅ {e(short(r.reason))}")
         lines.append(f"⚠️ {e(short(r.risk, 1))}")
@@ -125,7 +126,7 @@ def agent_section():
         for reason, g in vetoed.groupby("reason", sort=False):
             lines.append(f"・{e('、'.join(g['name']))}：{e(short(reason, 1))}")
     if lv:
-        lines += ["", "<i>目標＝同組歷史報酬中位數，樂觀＝前 25%；停損＝八成賺錢的歷史訊號都沒跌破的價位</i>"]
+        lines += ["", "<i>目標＝同組歷史報酬中位數，樂觀＝前 25%；停損＝八成賺錢的歷史訊號都沒跌破的價位，盤勢亂時依波動放寬；開盤就跳空跌破停損的，當天不要進場</i>"]
     return lines
 
 
@@ -144,7 +145,7 @@ def build_message():
     path = RESULTS / "picks_today.csv"
     picks = pd.read_csv(path, dtype={"stock_id": str}) if path.exists() else pd.DataFrame()
     day = picks["date"].iat[0] if len(picks) else ""
-    lines = [f"📈 <b>台股選股日報</b>　{day} 收盤"]
+    lines = [f"📈 <b>台股選股日報</b>　{day} 收盤，適用隔天開盤"]
     m = market_line()
     if m:
         lines.append(m)
