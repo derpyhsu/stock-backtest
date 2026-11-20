@@ -10,6 +10,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from .fundamentals import load_industry
 from .market import RESULTS, load_market_index, load_panel
 
 OUT = RESULTS / "健檢"
@@ -56,11 +57,12 @@ def bucketize(df):
     df["股價分組"] = pd.cut(df["股價"], [0, 30, 100, 300, np.inf], labels=["<30元", "30~100元", "100~300元", ">300元"])
     df["大盤離高點分組"] = pd.cut(df["大盤離高點"], [-np.inf, -0.15, -0.05, np.inf],
                             labels=["大盤距高點跌>15%", "跌5~15%", "接近高點"])
+    df["產業"] = df["stock_id"].map(load_industry()).fillna("其他")
     df["主力"] = df["main_force"].map({"foreign": "外資", "trust": "投信", "margin": "融資"}).fillna("其他")
     return df
 
 
-DIMS = ["大盤狀態", "大盤離高點分組", "market", "主力", "量比分組", "前20日分組", "離季線分組", "股價分組"]
+DIMS = ["產業", "大盤狀態", "大盤離高點分組", "market", "主力", "量比分組", "前20日分組", "離季線分組", "股價分組"]
 
 
 def analyze():

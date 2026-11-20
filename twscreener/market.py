@@ -19,6 +19,7 @@ from .backtest import HORIZONS, baseline_for, signals_for, simulate_exit, summar
 from .adjust import adjust_prices
 from .adjust import load as load_exrights
 from .features import ROOT, add_features
+from .fundamentals import load_industry
 from .strategies import MOMENTUM, STRATEGIES, main_force
 
 DAILY = ROOT / "data" / "daily"
@@ -241,6 +242,7 @@ def run_scan(sig=None, frames=None):
         add(sid, name, market, df, MOMENTUM, "momentum", {"mom": float(m)})
     picks = pd.DataFrame(picks)
     if not picks.empty:
+        picks["industry"] = picks["stock_id"].map(load_industry()).fillna("")
         picks = picks.sort_values(["win60", "vol_ratio"], ascending=False)
     picks.to_csv(RESULTS / "picks_today.csv", index=False, encoding="utf-8-sig")
     log_picks(picks)

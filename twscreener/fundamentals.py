@@ -4,6 +4,7 @@
     python -m twscreener.fundamentals valuation            # 補齊 data/daily 有的每個交易日的估值
     python -m twscreener.fundamentals revenue              # 補月營收（最新月 + 能抓到的歷史月份）
     python -m twscreener.fundamentals revenue --start 2023-01
+    python -m twscreener.fundamentals industry             # 產業別 -> data/industry.csv
 
 存檔：
     data/valuation/YYYYMMDD.csv : stock_id, pe, dividend_yield, pb
@@ -219,9 +220,49 @@ def revenue_features(rev):
     return r
 
 
+INDUSTRY = {
+    "01": "水泥", "02": "食品", "03": "塑膠", "04": "紡織", "05": "電機機械", "06": "電器電纜", "08": "玻璃陶瓷",
+    "09": "造紙", "10": "鋼鐵", "11": "橡膠", "12": "汽車", "14": "建材營造", "15": "航運", "16": "觀光餐旅",
+    "17": "金融保險", "18": "貿易百貨", "19": "綜合", "20": "其他", "21": "化學", "22": "生技醫療", "23": "油電燃氣",
+    "24": "半導體", "25": "電腦週邊", "26": "光電", "27": "通信網路", "28": "電子零組件", "29": "電子通路",
+    "30": "資訊服務", "31": "其他電子", "32": "文化創意", "33": "農業科技", "34": "電子商務", "35": "綠能環保",
+    "36": "數位雲端", "37": "運動休閒", "38": "居家生活", "80": "管理股票", "91": "存託憑證",
+}
+
+
+def _json(url, tries=5):
+    for i in range(tries):
+        try:
+            r = requests.get(url, headers=UA, timeout=90)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:  # 連線被切斷時 JSON 會不完整，重試
+            pass
+        time.sleep(10 * (i + 1))
+    raise RuntimeError(f"抓不到 {url}")
+
+
+def update_industry():
+    """上市、上櫃公司的產業別 -> data/industry.csv（stock_id, industry）。一個月更新一次就夠。"""
+    rows = [(x["公司代號"], x["產業別"]) for x in _json("https://openapi.twse.com.tw/v1/opendata/t187ap03_L")]
+    rows += [(x["SecuritiesCompanyCode"], x["SecuritiesIndustryCode"])
+             for x in _json("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O")]
+    df = pd.DataFrame(rows, columns=["stock_id", "code"])
+    df["industry"] = df["code"].str.strip().map(INDUSTRY).fillna("其他")
+    df[["stock_id", "industry"]].to_csv(ROOT / "data" / "industry.csv", index=False, encoding="utf-8-sig")
+    print(f"產業別 {len(df)} 檔")
+
+
+def load_industry():
+    path = ROOT / "data" / "industry.csv"
+    if not path.exists():
+        return {}
+    return pd.read_csv(path, dtype=str).set_index("stock_id")["industry"].to_dict()
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["valuation", "revenue", "revenue_finmind", "all"])
+    ap.add_argument("what", choices=["valuation", "revenue", "revenue_finmind", "industry", "all"])
     ap.add_argument("--start", default="2023-01")
     ap.add_argument("--rounds", type=int, default=1, help="月營收：觀測站擋的時候重試幾輪（每輪間隔 15 分鐘）")
     args = ap.parse_args()
@@ -231,6 +272,8 @@ def main():
         update_revenue_finmind()
     if args.what in ("valuation", "all"):
         update_valuation()
+    if args.what in ("industry", "all"):
+        update_industry()
 
 
 if __name__ == "__main__":

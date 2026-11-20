@@ -200,7 +200,7 @@ function renderPicks() {
     }).join("");
     const others = g.items.slice(1).map(q => `${(STRAT[q.strategy] || {name: q.strategy}).name} 勝率 ${pct(q.win60)}`).join("・");
     html += `<article class="pick" tabindex="0" data-i="${i}">
-      <div class="pick-head"><div><span class="pick-name">${esc(p.name)}</span> <span class="sub num">${p.stock_id}・${esc(p.market)}</span></div>
+      <div class="pick-head"><div><span class="pick-name">${esc(p.name)}</span> <span class="sub num">${p.stock_id}・${esc(p.market)}${p.industry ? "・" + esc(p.industry) : ""}</span></div>
       <div class="chips">${chips}</div></div>
       ${ch ? spark(ch) : ""}
       <div class="stats">

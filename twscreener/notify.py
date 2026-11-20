@@ -73,7 +73,9 @@ def build_message():
             head += f"　歷史 60 日勝率 {win.mean():.0%}"
         lines.append(head)
         for _, r in g.iterrows():
-            lines.append(f"• {html.escape(str(r['name']))} {r['stock_id']}　收 {r['close']:g}")
+            ind = r.get("industry")
+            ind = f"［{html.escape(str(ind))}］" if isinstance(ind, str) and ind else ""
+            lines.append(f"• {html.escape(str(r['name']))} {r['stock_id']}{ind}　收 {r['close']:g}")
     lines.append("\n勝率是過去的統計，不保證未來。")
     lines.append(f'<a href="{DASHBOARD_URL}">打開看板看走勢圖和說明</a>')
     return "\n".join(lines)

@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 from .features import ROOT
-from .fundamentals import revenue_features
+from .fundamentals import load_industry, revenue_features
 from .market import RESULTS, load_market_index, load_panel
 
 DROP = -0.25
@@ -72,6 +72,7 @@ def screen_day(d, raw_close, ctx, rev, names):
     df["date"] = d
     df = df.reset_index().rename(columns={"index": "stock_id"})
     df["name"] = df["stock_id"].map(names)
+    df["industry"] = df["stock_id"].map(load_industry())
     return df
 
 
@@ -87,13 +88,12 @@ def today():
     close, ctx, rev, names = _setup()
     d = close.index[-1]
     df = screen_day(d, close, ctx, rev, names)
-    out = df[df["誤殺候選"]].copy()
+    out = df.copy()
     out["高成長"] = out["yoy3"] >= YOY3_STRONG
-    out = out.sort_values(["高成長", "yoy3"], ascending=False)
-    cols = ["date", "stock_id", "name", "close", "drop", "ym", "yoy", "yoy3", "pe", "pe_med", "高成長", "法人在接"]
+    out = out.sort_values(["誤殺候選", "高成長", "yoy3"], ascending=False)
+    cols = ["date", "stock_id", "name", "industry", "close", "drop", "ym", "yoy", "yoy3", "pe", "pe_med", "誤殺候選", "高成長", "法人在接"]
     out[cols].to_csv(RESULTS / "oversold_today.csv", index=False, encoding="utf-8-sig")
-    print(f"{d.date()}：跌深 {len(df)} 檔，其中誤殺候選 {len(out)} 檔")
-    print(out[cols].round(3).to_string(index=False))
+    print(f"{d.date()}：跌深 {len(df)} 檔，其中誤殺候選 {int(out['誤殺候選'].sum())} 檔")
 
 
 def backtest(step=5):
@@ -118,7 +118,73 @@ def backtest(step=5):
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "today"
-    backtest() if cmd == "backtest" else today()
+    if cmd == "backtest":
+        backtest()
+    elif cmd == "score":
+        score_today()
+    else:
+        today()
+        score_today()
+
+
+
+# ---- 估計勝率：用「過去急跌時、條件相似的跌深股」60 日後的結果 ----
+K = 20  # 樣本少的組別往整體平均拉回（貝氏收縮），避免小樣本亂跳
+
+
+def _tiers(df):
+    t = pd.DataFrame(index=df.index)
+    t["營收"] = pd.cut(df["yoy3"], [-np.inf, 0.10, YOY3_STRONG, np.inf], labels=["營收<10%", "營收10~48%", "營收>48%"])
+    disc = df["pe"] / df["pe_med"] - 1
+    t["估值"] = pd.cut(disc, [-np.inf, -0.30, 0, np.inf], labels=["便宜30%+", "便宜0~30%", "不便宜"]).cat.add_categories("無本益比")
+    t.loc[disc.isna(), "估值"] = "無本益比"
+    t["跌幅"] = pd.cut(df["drop"], [-np.inf, -0.35, 0], labels=["跌>35%", "跌25~35%"])
+    t = t.astype(object).fillna("營收不明")
+    return t["營收"].astype(str) + "｜" + t["估值"].astype(str) + "｜" + t["跌幅"].astype(str)
+
+
+def _cell_stats(hist):
+    p0, m0 = (hist["fwd60"] > 0).mean(), hist["fwd60"].median()
+    g = hist.groupby("cell")["fwd60"]
+    st = pd.DataFrame({"n": g.size(), "wins": g.apply(lambda x: (x > 0).sum()), "med": g.median()})
+    st["win_est"] = (st["wins"] + K * p0) / (st["n"] + K)
+    st["med_est"] = (st["n"] * st["med"] + K * m0) / (st["n"] + K)
+    return st, p0, m0
+
+
+def validate(hist):
+    """每次拿掉一段急跌，用其他幾段的統計去預測它，看高分組是不是真的比較好。"""
+    rows = []
+    for ep in sorted(hist["月"].unique()):
+        train, test = hist[hist["月"] != ep], hist[hist["月"] == ep].copy()
+        st, p0, _ = _cell_stats(train)
+        test["est"] = test["cell"].map(st["win_est"]).fillna(p0)
+        hi = test["est"] >= test["est"].quantile(2 / 3)
+        rows.append({"急跌": ep, "筆數": len(test), "高分組勝率": (test.loc[hi, "fwd60"] > 0).mean(),
+                     "其他勝率": (test.loc[~hi, "fwd60"] > 0).mean(),
+                     "高分組中位數": test.loc[hi, "fwd60"].median(), "其他中位數": test.loc[~hi, "fwd60"].median()})
+    return pd.DataFrame(rows)
+
+
+def score_today(top=15):
+    hist = pd.read_csv(RESULTS / "oversold_backtest.csv", dtype={"stock_id": str}).dropna(subset=["fwd60"])
+    hist["月"] = hist["date"].str[:7]
+    hist["cell"] = _tiers(hist)
+    val = validate(hist)
+    st, p0, m0 = _cell_stats(hist)
+    today = pd.read_csv(RESULTS / "oversold_today.csv", dtype={"stock_id": str})
+    today["cell"] = _tiers(today)
+    today = today.join(st[["n", "win_est", "med_est"]], on="cell")
+    today["win_est"] = today["win_est"].fillna(p0)
+    today["med_est"] = today["med_est"].fillna(m0)
+    today = today.sort_values(["win_est", "med_est", "yoy3"], ascending=False)
+    today.to_csv(RESULTS / "oversold_scored.csv", index=False, encoding="utf-8-sig")
+    print("留一段驗證：\n", val.round(3).to_string(index=False))
+    print(f"\n整體跌深股 60 日勝率 {p0:.0%}，中位數 {m0:+.1%}")
+    print(st.sort_values("win_est", ascending=False).round(3).to_string())
+    cols = ["stock_id", "name", "industry", "close", "drop", "yoy3", "pe", "pe_med", "cell", "n", "win_est", "med_est", "法人在接"]
+    print(today[cols].head(top).round(3).to_string(index=False))
+    return today, val
 
 
 if __name__ == "__main__":
