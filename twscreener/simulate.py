@@ -83,7 +83,8 @@ def outcome(c, day, adj, opn, end=None):
         hit = path[path <= stop]
         with_stop = (hit.iat[0] - COST) if len(hit) else hold
         r20 = path.iat[19] - COST if len(path) > 19 else np.nan
-        res.append({"20日報酬": r20, "抱到最後": hold, "有停損": with_stop,
+        r60 = path.iat[59] - COST if len(path) > 59 else np.nan
+        res.append({"20日報酬": r20, "60日報酬": r60, "抱到最後": hold, "有停損": with_stop,
                     "停損日": hit.index[0].date() if len(hit) else None, "期間最高": path.max()})
     return pd.concat([c.reset_index(drop=True), pd.DataFrame(res)], axis=1)
 
@@ -95,7 +96,8 @@ def baseline(day, adj, opn, raw, vol):
     entry = opn.iloc[i + 1][ids]
     r = adj.iloc[-1][ids] / entry - 1 - COST
     r20 = adj.iloc[min(i + 20, len(adj) - 1)][ids] / entry - 1 - COST
-    return r.mean(), r20.mean(), (r > 0).mean()
+    r60 = adj.iloc[i + 60][ids] / entry - 1 - COST if i + 60 < len(adj) else pd.Series(np.nan, index=ids)
+    return r.mean(), r20.mean(), r60.mean()
 
 
 def run(days):
@@ -115,10 +117,11 @@ def run(days):
         if c.empty:
             continue
         c = outcome(c, d, adj, opn)
-        b_end, b20, b_win = baseline(d, adj, opn, raw, vol)
+        b_end, b20, b60 = baseline(d, adj, opn, raw, vol)
         nxt = adj.index[adj.index.get_loc(d) + 1]
         t_end = taiex.iloc[-1] / taiex.loc[nxt] - 1
         c["date"], c["regime"], c["隨機買股_抱到最後"], c["隨機買股_20日"], c["加權指數_抱到最後"] = d.date(), regime, b_end, b20, t_end
+        c["隨機買股_60日"] = b60
         out.append(c)
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
@@ -140,12 +143,14 @@ def main():
         print(f"\n推薦平均：20日 {res['20日報酬'].mean():+.1%}，抱到最後 {res['抱到最後'].mean():+.1%}，有停損 {res['有停損'].mean():+.1%}")
         print(f"隨機買股：20日 {res['隨機買股_20日'].iat[0]:+.1%}，抱到最後 {res['隨機買股_抱到最後'].iat[0]:+.1%}；加權指數 {res['加權指數_抱到最後'].iat[0]:+.1%}")
     else:
-        g = res.groupby("date").agg(n=("stock_id", "size"), 推薦20日=("20日報酬", "mean"), 推薦抱到最後=("抱到最後", "mean"),
+        g = res.groupby("date").agg(n=("stock_id", "size"), 推薦20日=("20日報酬", "mean"), 推薦60日=("60日報酬", "mean"), 隨機60日=("隨機買股_60日", "first"), 推薦抱到最後=("抱到最後", "mean"),
                                      推薦有停損=("有停損", "mean"), 隨機20日=("隨機買股_20日", "first"),
                                      隨機抱到最後=("隨機買股_抱到最後", "first"), 加權指數=("加權指數_抱到最後", "first"))
         print(g.round(3).to_string())
         print("\n平均：", g.mean(numeric_only=True).round(3).to_dict())
         print("推薦 20 日贏隨機的天數：", int((g["推薦20日"] > g["隨機20日"]).sum()), "/", len(g))
+        print("推薦 60 日贏隨機的天數：", int((g["推薦60日"] > g["隨機60日"]).sum()), "/", int(g["推薦60日"].notna().sum()))
+        print("策略分布：", res["strategy"].value_counts().to_dict())
 
 
 if __name__ == "__main__":
