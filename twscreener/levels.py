@@ -131,7 +131,9 @@ def levels_for(picks):
 def main():
     log = pd.read_csv(RESULTS / "agent_picks_log.csv", dtype={"stock_id": str})
     day = log["pick_date"].max()
-    picks = log[(log["pick_date"] == day) & (log["verdict"] == "推薦")]
+    log = log[log["pick_date"] == day]
+    log = log[log["signal_date"] == log["signal_date"].max()]  # 同一天重選時用最新收盤那一批
+    picks = log[log["verdict"] == "推薦"]
     out = levels_for(picks)
     out.insert(0, "pick_date", day)
     out.to_csv(RESULTS / "agent_levels_today.csv", index=False, encoding="utf-8-sig")

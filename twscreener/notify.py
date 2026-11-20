@@ -100,6 +100,7 @@ def agent_section():
         return []
     day = log["pick_date"].max()
     today = log[log["pick_date"] == day]
+    today = today[today["signal_date"] == today["signal_date"].max()]  # 同一天重選時用最新收盤那一批
     picks = today[today["verdict"] == "推薦"]
     if picks.empty:
         return []
