@@ -16,7 +16,7 @@ description: 台股全市場每日更新：抓當天行情、除權息、月營�
 5. 發佈 `dashboard/index.html`（Claude 用 Artifact 工具，同一路徑、同一網址）。
 6. `bash scripts/sync_github.sh`：同步到 GitHub。腳本會擋下 `.env`。GitHub Pages 也從這裡更新（https://derpyhsu.github.io/stock-backtest/dashboard/，手機不用登入就能看）。
 7. `python3 -m twscreener.notify`：把今天的選股推播到 Telegram。需要環境變數 `TELEGRAM_BOT_TOKEN`；沒有就略過。收件人 ID 存在 `.env`。先用 `--dry` 可以只看訊息不送。
-8. 背景回補（可中斷續抓，不要和步驟 1 同時跑）：`data/daily` 少於約 760 檔時跑 `python3 -u -m twscreener.twse --start 2023-09-01 --end 2025-01-19`；月營收歷史沒補齊時跑 `python3 -u -m twscreener.fundamentals revenue --rounds 8`。
+8. 背景回補（可中斷續抓，不要和步驟 1 同時跑）：`data/daily` 最早一天晚於 2022-01-03 時跑 `python3 -u -m twscreener.twse --start 2022-01-01 --end 2025-01-19`（2022 是完整空頭年，驗證用）；月營收歷史沒補齊時跑 `python3 -u -m twscreener.fundamentals revenue --start 2021-01 --rounds 8`；估值缺的日子跑 `python3 -u -m twscreener.fundamentals valuation`（不要和抓日資料同時跑）。
 
 ## 回報
 
