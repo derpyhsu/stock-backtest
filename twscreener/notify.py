@@ -58,13 +58,37 @@ def chat_id():
     return cid
 
 
+def agent_section():
+    """有今天的 agent 推薦就放在最前面（results/agent_picks_log.csv）。"""
+    path = RESULTS / "agent_picks_log.csv"
+    if not path.exists():
+        return []
+    log = pd.read_csv(path, dtype={"stock_id": str})
+    if log.empty:
+        return []
+    day = log["pick_date"].max()
+    picks = log[(log["pick_date"] == day) & (log["verdict"] == "推薦")]
+    if picks.empty:
+        return []
+    lines = [f"🤖 <b>今日推薦</b>（{day}，數據＋新聞綜合判斷）"]
+    for i, r in enumerate(picks.itertuples(), 1):
+        lines.append(f"{i}. <b>{html.escape(r.name)} {r.stock_id}</b>［{html.escape(str(r.industry))}］收 {r.close:g}")
+        lines.append(f"   依據：{html.escape(str(r.reason))}")
+        lines.append(f"   風險：{html.escape(str(r.risk))}")
+    vetoed = log[(log["pick_date"] == day) & (log["verdict"] == "否決")]
+    if len(vetoed):
+        lines.append(f"否決 {len(vetoed)} 檔（詳見看板）：" + "、".join(vetoed["name"].head(8)))
+    lines.append("")
+    return lines
+
+
 def build_message():
     path = RESULTS / "picks_today.csv"
     picks = pd.read_csv(path, dtype={"stock_id": str}) if path.exists() else pd.DataFrame()
     if picks.empty:
         return "📊 <b>台股選股看板</b>\n今天沒有股票符合條件。\n\n" + f'<a href="{DASHBOARD_URL}">打開看板</a>'
     day = picks["date"].iat[0]
-    lines = [f"📊 <b>台股選股 {day}</b>（共 {len(picks)} 檔次）"]
+    lines = agent_section() + [f"📊 <b>各策略訊號 {day}</b>（共 {len(picks)} 檔次）"]
     for strategy, g in picks.groupby("strategy", sort=False):
         label = strategy.split("_", 1)[-1]
         win = g["win60"].dropna()

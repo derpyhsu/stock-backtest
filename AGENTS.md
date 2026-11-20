@@ -8,11 +8,12 @@
 
 - `skill/daily-update/SKILL.md`：每日更新（抓資料、回測、看板、同步 GitHub）。
 - `skill/strategy-backtest/SKILL.md`：新增或修改策略、加基本面條件、驗證是否真的有用。
+- `skill/agent-review/SKILL.md`：每晚從候選股查新聞、選出 3~5 檔推薦並存檔。
 - `skill/commit/SKILL.md`：commit 規範。每次 commit 前讀。
 
 ## Boundaries
 
-- 選股和回測只用固定規則（`twscreener/`），agent 不參與初篩：成本高、答案不一致，回測時還會「偷看未來」。agent 只複審入選的十幾檔（消息面）。
+- 選股和回測只用固定規則（`twscreener/`），agent 不參與初篩：成本高、答案不一致，回測時還會「偷看未來」。agent 只從 `results/candidates_today.csv` 裡挑（消息面複審），推薦紀錄 `results/agent_picks_log.csv` 和 `picks_log.csv` 一樣不可改寫過去的列。
 - 資料一律用證交所、櫃買的「全市場一天一檔」批次端點，不要逐檔抓。證交所會限流（HTTP 307 安全頁），程式會自己等待重試；不要同時跑兩支打證交所的程式。
 - 回測不能用到訊號當天之後才知道的資訊。月營收在次月 10 號後才能用（`revenue_features` 的 `available`）。
 - 策略要和「隨機買股」「買大盤」一起比，60 個交易日勝率與報酬中位數為主要指標。只贏在一段期間的結果不算數。
