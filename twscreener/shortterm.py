@@ -1,7 +1,8 @@
 """短線策略回測（1/3/5/10 日）：隔天開盤進場、第 N 天收盤出場，每筆扣 0.6% 交易成本。
 
     python -m twscreener.shortterm            # -> results/shortterm_summary.csv、results/shortterm_signals.csv
-    python -m twscreener.shortterm today      # 今天收盤後的短線訊號 -> results/shortterm_today.csv
+    python -m twscreener.shortterm today      # 今天的短線候選（附 5/10 日停利停損）-> results/shortterm_today.csv
+    python -m twscreener.shortterm check      # 對帳：agent 過去的短線推薦 5/10 日後表現 vs 隨機買股
 
 規則（訊號日 t 收盤後判斷，t+1 開盤買）：
 - 超跌反彈：收盤在 200 日均線之上，RSI(2) < 10（兩天內急跌）。
@@ -9,6 +10,14 @@
 - 爆量長紅：當天漲超過 6%，成交量 > 20 日均量 3 倍。
 - 漲停延續：當天漲停（漲幅 >= 9.5%）。
 基準：同一天所有流動性夠的股票（隨機買股）。
+
+每晚候選只用「拉回買」兩種（連跌反彈優先、超跌反彈其次）：2024-06～2026-11 回測中，
+扣成本後 10 日平均報酬在前後兩段都為正（連跌反彈 +1.4%、+2.8%），追漲的兩種不穩定。
+大盤「多頭回檔」時兩種都前後段相反（+4% / -7%），暫停。
+停損：近 20 日平均單日波動 × 3（更緊的停損和固定停利在回測裡都降低報酬，所以只防大跌）。
+停利參考：同規則、同大盤狀態歷史 5/10 日報酬（以各自波動為單位）的第 75 百分位，大約四次一次做得到。
+價量特徵（跌幅、離均線、量比…）在前後段方向不一致，不拿來排序；排序只看規則和成交金額，
+真正的篩選交給 agent 查新聞（見 skill/agent-review）。
 流動性：20 日均量 >= 500 張、股價 >= 10 元。單日超過 11% 的跳動視為減資、分割，價格已調整。
 """
 import sys
@@ -113,18 +122,99 @@ def backtest():
     return sig
 
 
+PULLBACK = ["連跌反彈", "超跌反彈"]  # 優先順序
+PAUSE_REGIMES = ["多頭回檔"]
+STOP_MULT = 3
+TOP_CANDIDATES = 15
+
+
+def history_levels(rules, fwd, ctx, atr):
+    """同規則、同大盤狀態（不足 200 筆用整個規則）的 5/10 日勝率、平均；停利用「報酬 ÷ 近 20 日平均波動」的第 75 百分位，
+    這樣金融股這種波動小的不會拿到和電子股一樣大的目標。"""
+    rows = []
+    for name in PULLBACK:
+        st = rules[name].stack()
+        st = st[st]
+        df = st.reset_index()[["date", "stock_id"]]
+        for h in (5, 10):
+            df[f"r{h}"] = fwd[h].stack().reindex(pd.MultiIndex.from_frame(df[["date", "stock_id"]])).to_numpy()
+        df["atr"] = atr.stack().reindex(pd.MultiIndex.from_frame(df[["date", "stock_id"]])).to_numpy()
+        df["rule"] = name
+        rows.append(df.dropna(subset=["r10"]))
+    h = pd.concat(rows).merge(ctx, on="date", how="left")
+
+    def m(g):
+        return pd.Series({"樣本數": len(g), "5日勝率": (g["r5"] > 0).mean(), "5日平均": g["r5"].mean(),
+                          "5日停利": (g["r5"] / g["atr"]).quantile(0.75), "10日勝率": (g["r10"] > 0).mean(),
+                          "10日平均": g["r10"].mean(), "10日停利": (g["r10"] / g["atr"]).quantile(0.75)})
+    return h.groupby("rule").apply(m), h.groupby(["rule", "大盤狀態"]).apply(m)
+
+
 def today():
+    from .fundamentals import load_industry
     panel = load_panel()
     raw, adj, o, vol, ret = prepare(panel)
     rules = signals(raw, adj, vol, ret)
+    fwd, _ = forward(adj, o)
+    ctx = market_context()[["date", "大盤狀態"]]
     d = raw.index[-1]
+    regime = ctx.set_index("date")["大盤狀態"].get(d)
     names = panel.drop_duplicates("stock_id", keep="last").set_index("stock_id")["name"]
-    rows = [{"date": d.date(), "rule": k, "stock_id": s, "name": names.get(s), "close": raw.loc[d, s]}
-            for k, m in rules.items() if k != "隨機買股" for s in m.columns[m.loc[d].to_numpy()]]
+    ind = load_industry()
+    atr_all = ret.abs().rolling(20).mean()
+    allp, reg = history_levels(rules, fwd, ctx, atr_all)
+    atr = atr_all.loc[d]
+    value = (vol * raw).rolling(20).mean().loc[d]
+    rows = []
+    for k in PULLBACK:
+        st = reg.loc[(k, regime)] if (k, regime) in reg.index and reg.loc[(k, regime), "樣本數"] >= 200 else allp.loc[k]
+        basis = f"{k}｜{regime}" if st is not allp.loc[k] and (k, regime) in reg.index else f"{k}（全部）"
+        for s in rules[k].columns[rules[k].loc[d].to_numpy()]:
+            c = raw.loc[d, s]
+            rows.append({"date": d.date(), "rule": k, "stock_id": s, "name": names.get(s), "industry": ind.get(s, "其他"),
+                         "close": c, "3日跌幅": adj.loc[d, s] / adj[s].shift(3).loc[d] - 1, "近20日平均波動": atr.get(s),
+                         "20日均成交額億": value.get(s) * 1000 / 1e8,
+                         "停損價": round(c * (1 - STOP_MULT * atr.get(s, 0)), 2),
+                         "5日停利價": round(c * (1 + st["5日停利"] * atr.get(s, 0) + COST), 2),
+                         "10日停利價": round(c * (1 + st["10日停利"] * atr.get(s, 0) + COST), 2),
+                         "5日勝率": st["5日勝率"], "5日平均": st["5日平均"], "10日勝率": st["10日勝率"],
+                         "10日平均": st["10日平均"], "樣本數": int(st["樣本數"]), "依據組別": basis, "大盤狀態": regime})
     out = pd.DataFrame(rows)
+    if len(out):
+        out["_p"] = out["rule"].map({k: i for i, k in enumerate(PULLBACK)})
+        out = out.sort_values(["_p", "20日均成交額億"], ascending=[True, False]).drop_duplicates("stock_id")
+        out = out.groupby("industry", sort=False).head(2).drop(columns="_p").head(TOP_CANDIDATES)
+    if regime in PAUSE_REGIMES:
+        out = out.iloc[0:0]
+        print(f"大盤「{regime}」：拉回買在這種盤歷史上前後段相反，今天不出短線候選")
     out.to_csv(RESULTS / "shortterm_today.csv", index=False, encoding="utf-8-sig")
-    print(out.groupby("rule").size() if len(out) else "今天沒有短線訊號")
+    pd.set_option("display.width", 250)
+    print(f"{d:%Y-%m-%d} 大盤 {regime}，短線候選 {len(out)} 檔")
+    if len(out):
+        print(out.drop(columns=["date", "大盤狀態", "依據組別"]).round(3).to_string(index=False))
+    return out
+
+
+def check():
+    """agent 短線推薦（results/shortterm_picks_log.csv）的 5/10 日結果，和同一天隨機買股比。"""
+    path = RESULTS / "shortterm_picks_log.csv"
+    if not path.exists():
+        print("還沒有短線推薦紀錄")
+        return
+    log = pd.read_csv(path, dtype={"stock_id": str})
+    log = log[log["verdict"] == "推薦"].copy()
+    log["date"] = pd.to_datetime(log["signal_date"])
+    raw, adj, o, vol, ret = prepare(load_panel())
+    fwd, _ = forward(adj, o)
+    liquid = signals(raw, adj, vol, ret)["隨機買股"]
+    for h in (5, 10):
+        log[f"r{h}"] = [fwd[h].at[d, s] if d in fwd[h].index and s in fwd[h].columns else np.nan
+                        for d, s in zip(log["date"], log["stock_id"])]
+        log[f"隨機{h}"] = log["date"].map(lambda d: fwd[h].loc[d][liquid.loc[d]].mean() if d in liquid.index else np.nan)
+    print(log[["signal_date", "stock_id", "name", "rule", "r5", "隨機5", "r10", "隨機10"]].round(3).to_string(index=False))
+    print("\n平均：", log[["r5", "隨機5", "r10", "隨機10"]].mean().round(4).to_dict())
 
 
 if __name__ == "__main__":
-    today() if (len(sys.argv) > 1 and sys.argv[1] == "today") else backtest()
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    {"today": today, "check": check}.get(cmd, backtest)()

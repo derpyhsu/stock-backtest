@@ -130,6 +130,30 @@ def agent_section():
     return lines
 
 
+def shortterm_section():
+    """今天的 agent 短線推薦（results/shortterm_picks_log.csv），持有 5～10 天。"""
+    path = RESULTS / "shortterm_picks_log.csv"
+    if not path.exists():
+        return []
+    log = pd.read_csv(path, dtype={"stock_id": str})
+    if log.empty:
+        return []
+    today = log[log["pick_date"] == log["pick_date"].max()]
+    picks = today[today["verdict"] == "推薦"]
+    if picks.empty:
+        return []
+    lines = [SEP, f"⚡ <b>短線 {len(picks)} 檔</b>（持有 5～10 天）"]
+    for i, r in enumerate(picks.itertuples()):
+        lines += ["", f"{CIRCLE[i]} <b>{e(r.name)} {r.stock_id}</b>｜{e(r.industry)}｜{e(r.rule)}", f"收盤 {price(r.close)}"]
+        lines.append(f"🎯 停利 5日 <b>{price(r.tp5)}</b>｜10日 <b>{price(r.tp10)}</b>")
+        lines.append(f"🛑 停損 <b>{price(r.stop)}</b>（{r.stop / r.close - 1:+.0%}）")
+        lines.append(f"📊 歷史 10 日勝率 {r.hist_win10:.0%}，平均 {r.hist_mean10:+.1%}")
+        lines.append(f"✅ {e(short(r.reason))}")
+        lines.append(f"⚠️ {e(short(r.risk, 1))}")
+    lines += ["", "<i>停利＝同規則歷史 5/10 日報酬前 25%（依個股波動換算）；停損＝近 20 日平均波動 × 3；第 10 天收盤沒到停利就出場</i>"]
+    return lines
+
+
 def signals_section(picks):
     lines = [SEP, f"📊 <b>各策略訊號</b>（{len(picks)} 檔次）"]
     for strategy, g in picks.groupby("strategy", sort=False):
@@ -150,6 +174,7 @@ def build_message():
     if m:
         lines.append(m)
     lines += agent_section()
+    lines += shortterm_section()
     if picks.empty:
         lines += [SEP, "今天沒有股票符合條件。"]
     else:

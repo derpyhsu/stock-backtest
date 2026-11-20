@@ -27,6 +27,17 @@ description: 每晚從規則篩出的候選股中，查新聞與重大訊息，�
    - 目標＝同組該期間報酬中位數；樂觀＝第 75 百分位。樣本不足（策略 30 筆、恐慌誤殺 100 筆）就改用同來源全部訊號，並在依據欄註明。
 8. `python3 -m twscreener.notify` 會把推薦（含停損、目標）放在推播最前面。
 
+## 短線（持有 5～10 天）
+
+9. `python3 -m twscreener.shortterm today` → `results/shortterm_today.csv`：只有「連跌反彈」「超跌反彈」（拉回買）的候選，最多 15 檔、同產業最多 2 檔，已附停損價、5/10 日停利價和歷史勝率。大盤「多頭回檔」時不出候選，當天就不推短線。
+10. 從表裡挑 **0~3 檔**，不同產業。查新聞（近 7 天）分辨「為什麼跌」：
+   - 隨大盤或族群恐慌一起跌、公司本身營收／獲利沒變壞 → 可以推薦。
+   - 跌是因為公司自己的利空（營收衰退、下修展望、財報不佳、掏空、處置股）→ 否決。
+   - 正是這波賣壓的核心族群、還在急殺 → 傾向否決或寫明要更小部位。
+   - 停損超過 -15% 的要在風險欄提醒部位要更小。
+11. 寫入 `results/shortterm_picks_log.csv`（pick_date, signal_date, stock_id, name, industry, rule, close, stop, tp5, tp10, hist_win10, hist_mean10, verdict, reason, risk, news, reviewer），價位照抄候選表；同一天重跑先刪當天舊列，**過去的列不可修改**。在當天的 md 加一段「短線」。notify 會把它放在中長線推薦後面。
+12. 對帳：`python3 -m twscreener.shortterm check`（5/10 日後報酬 vs 同日隨機買股），每月健檢時看；累積 2 個月以上再判斷新聞複審有沒有幫助。
+
 ## 驗收
 
 每月健檢（`twscreener/review.py`）比較三組 60 日報酬：agent 推薦 vs 候選表排序前 3 名 vs 隨機買股；也比較「否決」的後續表現。累積 3 個月以上才下結論。
