@@ -1,9 +1,9 @@
 """全市場版：用 data/daily/ 的每日全市場資料回測、每日選股、對帳。
 
 用法：
-    python -m mbacktest.market backtest   # 全市場回測 -> results/market_*.csv
-    python -m mbacktest.market scan       # 今天的推薦 -> results/picks_today.csv，並寫入 picks_log.csv
-    python -m mbacktest.market all        # 兩個都跑，並輸出儀表板資料 dashboard/data.json
+    python -m twscreener.market backtest   # 全市場回測 -> results/market_*.csv
+    python -m twscreener.market scan       # 今天的推薦 -> results/picks_today.csv，並寫入 picks_log.csv
+    python -m twscreener.market all        # 兩個都跑，並輸出儀表板資料 dashboard/data.json
 
 只回測「流動性夠」的股票：訊號當天 20 日均量 >= MIN_VOL 張、股價 >= MIN_PRICE。
 """
@@ -33,7 +33,7 @@ FORCE_NAME = {"foreign": "外資", "trust": "投信", "margin": "融資"}
 def load_panel():
     files = sorted(DAILY.glob("*.csv"))
     if not files:
-        sys.exit("data/daily 沒有資料，先跑 python -m mbacktest.twse")
+        sys.exit("data/daily 沒有資料，先跑 python -m twscreener.twse")
     # 只用最後一段連續的日子（中間缺超過 20 天就丟掉前面那段，避免均線跨過斷層）
     dates = [pd.Timestamp(f.stem) for f in files]
     start = 0
@@ -109,7 +109,7 @@ def run_backtest():
     panel = load_panel()
     mkt = load_market_index()
     days = sorted(panel["date"].unique())
-    common_start = pd.Timestamp(days[min(250, len(days) - 1)])  # M哥策略最早能出訊號的日子
+    common_start = pd.Timestamp(days[min(250, len(days) - 1)])  # 型態策略最早能出訊號的日子
     sig_rows, base_rows, n = [], [], 0
     mom_frames = {}
     for sid, name, market, df in stock_frames(panel):
@@ -352,7 +352,7 @@ def main():
             # 全市場歷史還不夠長、還算不出 60 日後報酬時，先用案例股（FinMind，2017 起）的統計
             sig = pd.read_csv(RESULTS / "signals.csv", dtype={"stock_id": str})
             summary = pd.read_csv(RESULTS / "summary.csv")
-            source = f"暫用 M哥案例股 {sig['stock_id'].nunique()} 檔（全市場歷史還在補）"
+            source = f"暫用 手冊案例股 {sig['stock_id'].nunique()} 檔（全市場歷史還在補）"
         last, picks, charts, _ = run_scan(sig)
         export_dashboard(sig, summary, last, picks, charts, source)
 

@@ -1,4 +1,4 @@
-<title>M哥選股看板</title>
+<title>台股選股看板</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -82,7 +82,7 @@ dialog button { font: inherit; background: var(--accent); color: var(--panel); b
 <div class="wrap">
   <header>
     <div>
-      <h1>M哥選股看板</h1>
+      <h1>台股選股看板</h1>
       <div class="sub" id="updated"></div>
     </div>
     <div class="sub" id="universe"></div>
@@ -92,7 +92,7 @@ dialog button { font: inherit; background: var(--accent); color: var(--panel); b
     <button role="tab" id="tab-picks" aria-selected="true" data-tab="picks">今日推薦</button>
     <button role="tab" id="tab-score" aria-selected="false" data-tab="score">策略成績單</button>
     <button role="tab" id="tab-log" aria-selected="false" data-tab="log">推薦對帳</button>
-    <button role="tab" id="tab-cases" aria-selected="false" data-tab="cases">M哥案例</button>
+    <button role="tab" id="tab-cases" aria-selected="false" data-tab="cases">手冊案例</button>
   </nav>
 
   <section class="section" id="picks"></section>
@@ -167,7 +167,7 @@ function spark(ch, w = 300, h = 90, big = false) {
 function renderPicks() {
   const el = document.getElementById("picks");
   const picks = DATA.picks || [];
-  let html = `<div class="note">每天收盤後，用 M哥的四種規則掃過全市場流動性夠的股票。卡片上的「歷史勝率」是這個策略過去所有訊號在 60 個交易日後賺錢的比例，對照組隨機進場是 <b class="num">${pct(base.win_60d)}</b>。點卡片看走勢圖。</div>`;
+  let html = `<div class="note">每天收盤後，用 手冊的四種規則掃過全市場流動性夠的股票。卡片上的「歷史勝率」是這個策略過去所有訊號在 60 個交易日後賺錢的比例，對照組隨機進場是 <b class="num">${pct(base.win_60d)}</b>。點卡片看走勢圖。</div>`;
   if (!picks.length) {
     html += `<div class="empty">今天（${DATA.updated}）沒有股票觸發訊號。這很正常，訊號本來就不常出現，明天收盤後會再掃一次。</div>`;
     el.innerHTML = html; return;
@@ -262,7 +262,7 @@ function renderScore() {
   }
   if ((DATA.summary_cases || []).length) {
     const cb = DATA.summary_cases.find(r => r.strategy === "基準_隨機進場") || {};
-    html += `<h2>對照：只用 M哥案例股（2017 起）</h2><p class="sub">這些股票是 M哥事後挑出來寫的，數字會偏樂觀，只當參考。</p><div class="tablebox"><table><thead><tr><th>策略</th><th class="num">訊號數</th><th class="num">60 日勝率</th><th class="num">60 日中位數</th><th class="num">120 日勝率</th><th class="num">120 日中位數</th></tr></thead><tbody>`;
+    html += `<h2>對照：只用 手冊案例股（2017 起）</h2><p class="sub">這些股票是 手冊作者事後挑出來寫的，數字會偏樂觀，只當參考。</p><div class="tablebox"><table><thead><tr><th>策略</th><th class="num">訊號數</th><th class="num">60 日勝率</th><th class="num">60 日中位數</th><th class="num">120 日勝率</th><th class="num">120 日中位數</th></tr></thead><tbody>`;
     DATA.summary_cases.forEach(r => {
       const isBase = r.strategy === "基準_隨機進場";
       html += `<tr class="${isBase ? "base" : ""}"><td>${(STRAT[r.strategy] || {name: r.strategy}).name}</td><td class="num">${r.signals}</td><td class="num">${pct(r.win_60d)}</td><td class="num">${sgn(r.median_60d)}</td><td class="num">${pct(r.win_120d)}</td><td class="num">${sgn(r.median_120d)}</td></tr>`;
@@ -308,8 +308,8 @@ function renderCases() {
   const cs = DATA.cases || [];
   const withData = cs.filter(c => c["有資料"] === true || c["有資料"] === "True");
   const hit = withData.filter(c => c["抓到的策略"]);
-  let html = `<div class="note">M哥文章裡寫過的股票，在寫文日期前後 30 天內，規則有沒有發出訊號。有資料的 ${withData.length} 個案例中抓到 ${hit.length} 個。逆勢籌碼、心理黑洞訊號較多，部分「抓到」可能是巧合。</div>
-  <div class="tablebox"><table><thead><tr><th>股票</th><th>觀察日期</th><th>M哥寫的型態</th><th>規則抓到</th></tr></thead><tbody>`;
+  let html = `<div class="note">策略手冊裡寫過的股票，在寫文日期前後 30 天內，規則有沒有發出訊號。有資料的 ${withData.length} 個案例中抓到 ${hit.length} 個。逆勢籌碼、心理黑洞訊號較多，部分「抓到」可能是巧合。</div>
+  <div class="tablebox"><table><thead><tr><th>股票</th><th>觀察日期</th><th>手冊寫的型態</th><th>規則抓到</th></tr></thead><tbody>`;
   cs.forEach(c => {
     const has = c["有資料"] === true || c["有資料"] === "True";
     const got = c["抓到的策略"] ? c["抓到的策略"].split(";").map(k => `<span class="chip">${(STRAT[k] || {name: k}).name}</span>`).join(" ") : (has ? `<span class="sub">沒抓到</span>` : `<span class="sub">沒有資料</span>`);

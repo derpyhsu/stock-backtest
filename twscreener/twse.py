@@ -3,8 +3,8 @@
 每天存成 data/daily/YYYYMMDD.csv（休市日存 YYYYMMDD.none），可中斷續抓。
 
 用法：
-    python -m mbacktest.twse                       # 補到今天（已抓過的日子會跳過）
-    python -m mbacktest.twse --start 2023-10-01    # 回補歷史
+    python -m twscreener.twse                       # 補到今天（已抓過的日子會跳過）
+    python -m twscreener.twse --start 2023-10-01    # 回補歷史
 
 欄位：stock_id, name, market, open, high, low, close, vol(張),
       foreign_net(張，外資不含自營), trust_net(張), margin_bal(融資餘額，張)

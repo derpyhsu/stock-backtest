@@ -1,9 +1,9 @@
 """從 FinMind 下載台股資料，存成本機 CSV 快取（可中斷續抓）。
 
 用法：
-    python -m mbacktest.fetch --universe cases          # 只抓案例表裡的股票（快，先驗證用）
-    python -m mbacktest.fetch --universe all            # 全上市櫃普通股（免費額度下要跑很久，可中斷續抓）
-    python -m mbacktest.fetch --stocks 2330 1785
+    python -m twscreener.fetch --universe cases          # 只抓案例表裡的股票（快，先驗證用）
+    python -m twscreener.fetch --universe all            # 全上市櫃普通股（免費額度下要跑很久，可中斷續抓）
+    python -m twscreener.fetch --stocks 2330 1785
 
 環境變數 FINMIND_TOKEN：到 https://finmindtrade.com 註冊後取得，有 token 額度較高。
 """

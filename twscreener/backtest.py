@@ -1,13 +1,13 @@
-"""跑回測、算勝率，並用 M哥的案例驗證規則。
+"""跑回測、算勝率，並用 手冊的案例驗證規則。
 
 用法：
-    python -m mbacktest.backtest                 # 用 data/ 裡所有已下載的股票
-    python -m mbacktest.backtest --stocks 1785 6282
+    python -m twscreener.backtest                 # 用 data/ 裡所有已下載的股票
+    python -m twscreener.backtest --stocks 1785 6282
 
 輸出（results/）：
     signals.csv   每一筆訊號與之後的報酬
     summary.csv   各策略的訊號數、勝率、平均/中位數報酬（含大盤基準）
-    cases.csv     M哥案例在寫文日期前後 30 天內有沒有被規則抓到
+    cases.csv     手冊案例在寫文日期前後 30 天內有沒有被規則抓到
 """
 import argparse
 import csv

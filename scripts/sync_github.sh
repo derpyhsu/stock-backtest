@@ -14,7 +14,7 @@ chown -R "$(id -u):$(id -g)" .
 git add -A
 if git ls-files | grep -qE '(^|/)\.env$'; then echo ".env 不可以上傳" >&2; exit 1; fi
 if git diff --cached --quiet; then echo "沒有變更"; exit 0; fi
-git -c user.name="derpyhsu" -c user.email="derpyhsu@users.noreply.github.com" commit -q -m "每日更新 $(date +%F)
+git -c user.name="derpyhsu" -c user.email="derpyhsu@users.noreply.github.com" commit -q -m "data: daily update $(date +%F)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01DWj1XdHt74qkxRVdp3mjBD"

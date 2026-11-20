@@ -1,9 +1,9 @@
 """基本面資料：每日估值（本益比、殖利率、股價淨值比）與月營收。
 
 用法：
-    python -m mbacktest.fundamentals valuation            # 補齊 data/daily 有的每個交易日的估值
-    python -m mbacktest.fundamentals revenue              # 補月營收（最新月 + 能抓到的歷史月份）
-    python -m mbacktest.fundamentals revenue --start 2023-01
+    python -m twscreener.fundamentals valuation            # 補齊 data/daily 有的每個交易日的估值
+    python -m twscreener.fundamentals revenue              # 補月營收（最新月 + 能抓到的歷史月份）
+    python -m twscreener.fundamentals revenue --start 2023-01
 
 存檔：
     data/valuation/YYYYMMDD.csv : stock_id, pe, dividend_yield, pb

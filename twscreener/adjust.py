@@ -1,8 +1,8 @@
 """抓除權息資料，讓回測用「還原股價」，避免除息缺口被當成下跌。
 
 用法：
-    python -m mbacktest.adjust                    # 補到這個月
-    python -m mbacktest.adjust --start 2023-09-01
+    python -m twscreener.adjust                    # 補到這個月
+    python -m twscreener.adjust --start 2023-09-01
 
 存成 data/exrights.csv：date, stock_id, prev_close(除權息前收盤), ref(除權息參考價)
 每個月上市、上櫃各 1 次請求。

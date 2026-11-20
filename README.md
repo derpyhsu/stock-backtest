@@ -1,8 +1,8 @@
-# M哥策略回測
+# 台股選股策略回測系統
 
 > 決定、發現、設定、搬家步驟都整理在 `專案總覽.md`，先讀那份。
 
-把《M哥策略手冊》（`../strategy/M哥策略手冊.md`）裡只需要日資料的 4 種策略寫成程式，用 FinMind 的台股資料跑回測。
+把一份交易策略手冊（原文不在這個 repo）裡只需要日資料的 4 種策略寫成程式，用 FinMind 的台股資料跑回測。
 
 | 策略 | 規則摘要 |
 |---|---|
@@ -18,16 +18,16 @@
 ```bash
 pip install -r requirements.txt
 export FINMIND_TOKEN=你的token        # 可省略，但額度會少一半
-python -m mbacktest.fetch --universe cases   # 先抓案例表裡的股票（約 40 檔，大約 20 分鐘）
-python -m mbacktest.backtest                 # 產生 results/summary.csv、signals.csv、cases.csv
-python -m mbacktest.fetch --universe all     # 全市場約 1,800 檔，免費額度要跑一整晚，可以中斷續抓
+python -m twscreener.fetch --universe cases   # 先抓案例表裡的股票（約 40 檔，大約 20 分鐘）
+python -m twscreener.backtest                 # 產生 results/summary.csv、signals.csv、cases.csv
+python -m twscreener.fetch --universe all     # 全市場約 1,800 檔，免費額度要跑一整晚，可以中斷續抓
 ```
 
 ## 輸出
 
 - `results/summary.csv`：各策略的訊號數，以及 5、20、60、120 日後的勝率、平均報酬、中位數報酬，加上三破出場的交易結果。「基準_隨機進場」是同樣的股票每 10 天隨便買一次的結果，策略要明顯贏過它才算有用。
 - `results/signals.csv`：每一筆訊號、主要力量、之後的報酬。
-- `results/cases.csv`：M哥案例在寫文日期前後 30 天內，有沒有被規則抓到。
+- `results/cases.csv`：手冊案例在寫文日期前後 30 天內，有沒有被規則抓到。
 
 ## 已知限制
 
@@ -39,9 +39,9 @@ python -m mbacktest.fetch --universe all     # 全市場約 1,800 檔，免費�
 ## 每日選股看板（全市場版）
 
 ```bash
-python -m mbacktest.twse                      # 從證交所、櫃買抓全市場日資料（一天 6 次請求），只補缺的日子
-python -m mbacktest.twse --start 2023-09-01   # 回補歷史（可中斷續抓）
-python -m mbacktest.market all                # 全市場回測 + 今日掃描 + 推薦對帳，產生 dashboard/index.html
+python -m twscreener.twse                      # 從證交所、櫃買抓全市場日資料（一天 6 次請求），只補缺的日子
+python -m twscreener.twse --start 2023-09-01   # 回補歷史（可中斷續抓）
+python -m twscreener.market all                # 全市場回測 + 今日掃描 + 推薦對帳，產生 dashboard/index.html
 ```
 
 - 資料：`data/daily/YYYYMMDD.csv`（全市場一天一檔），`data/daily_index/`（加權指數、外資買賣超）。
@@ -56,7 +56,7 @@ python -m mbacktest.market all                # 全市場回測 + 今日掃描 +
 
 ## 路線圖（2026-11-19 與 Derpy 定案）
 漏斗架構：程式初篩 → agent 複審 → 驗收迴圈。
-1. 程式初篩（全市場 → 十幾檔）：技術面、籌碼面、基本面（估值 `mbacktest/fundamentals.py`、月營收、之後季報）、大盤濾網，全部用固定規則、可回測。agent 不碰這段（成本、不一致、回測會偷看未來）。
+1. 程式初篩（全市場 → 十幾檔）：技術面、籌碼面、基本面（估值 `twscreener/fundamentals.py`、月營收、之後季報）、大盤濾網，全部用固定規則、可回測。agent 不碰這段（成本、不一致、回測會偷看未來）。
 2. agent 複審（每晚 21:23 的自動更新裡加一段）：只看入選的十幾檔，查新聞、重大訊息、法說會、處置股名單 → 否決明顯利空、給消息面分數＋一句理由、白話解釋推薦原因與風險，寫進看板。
 3. 驗收：agent 判斷每天存檔，累積數月後比較「否決 vs 通過」的後續表現；每週檢討可提調參建議，但需回測驗證、由使用者決定才採用。
 順序：估值 → 月營收（歷史需 mopsov.twse.com.tw，目前被證交所限流擋）→ 大盤濾網 → 重大訊息 → agent 複審（新聞）→ 季報。
