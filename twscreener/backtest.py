@@ -81,6 +81,9 @@ def baseline_for(df, start=251):
     return rows
 
 
+COST = 0.006  # 一進一出：手續費 0.1425% x 2 + 證交稅 0.3%，取整數
+
+
 def summarize(sig):
     out = []
     for name, g in sig.groupby("strategy", sort=False):
@@ -90,6 +93,17 @@ def summarize(sig):
             row[f"win_{h}d"] = (r > 0).mean() if len(r) else np.nan
             row[f"mean_{h}d"] = r.mean() if len(r) else np.nan
             row[f"median_{h}d"] = r.median() if len(r) else np.nan
+        # 60 日持有：扣掉一進一出的交易成本後的期望值與賺賠比
+        r = g["ret_60d"].dropna() - COST
+        if len(r):
+            win, loss = r[r > 0], r[r <= 0]
+            row["net_win_60d"] = (r > 0).mean()
+            row["avg_gain_60d"] = win.mean() if len(win) else np.nan
+            row["avg_loss_60d"] = loss.mean() if len(loss) else np.nan
+            row["payoff_60d"] = -row["avg_gain_60d"] / row["avg_loss_60d"] if len(win) and len(loss) else np.nan
+            row["expectancy_60d"] = r.mean()
+        if "max_dd_60d" in g:
+            row["worst_dd_60d_p10"] = g["max_dd_60d"].quantile(0.1)
         if "trade_ret" in g and g["trade_ret"].notna().any():
             t = g["trade_ret"].dropna()
             row["trade_win"] = (t > 0).mean()

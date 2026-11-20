@@ -61,6 +61,18 @@ def load_market_index():
     return out
 
 
+def fix_jumps(df, limit=0.11):
+    """台股單日漲跌幅上限 10%。超過 11% 的跳動多半是減資、分割、面額變更（除權息表沒有），
+    把之前的價格按比例調整，避免回測把它當成暴漲暴跌。"""
+    c = df["close"]
+    ratio = c / c.shift(1)
+    jumps = ratio[(ratio - 1).abs() > limit]
+    for d, r in jumps.items():
+        for col in ["open", "high", "low", "close"]:
+            df.loc[df.index < d, col] *= r
+    return df
+
+
 def stock_frames(panel):
     names = panel.drop_duplicates("stock_id", keep="last").set_index("stock_id")[["name", "market"]]
     ex = load_exrights()
@@ -71,6 +83,7 @@ def stock_frames(panel):
         if len(g) < 260:
             continue
         df = adjust_prices(g[["open", "high", "low", "close", "vol"]].astype(float).copy(), ex_by.get(sid))
+        df = fix_jumps(df)
         df["foreign_net"] = g["foreign_net"].fillna(0.0) if "foreign_net" in g else 0.0
         df["trust_net"] = g["trust_net"].fillna(0.0) if "trust_net" in g else 0.0
         # 外資持股用累計淨買超近似：B1 只看增減，效果相同
