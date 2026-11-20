@@ -1,0 +1,333 @@
+<title>M哥選股看板</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* 版面：上方一條收盤資訊帶，下方分頁；推薦卡片是兩欄格線，手機一欄。台股慣例：紅漲綠跌。 */
+:root {
+  --bg: #f3f4f1;
+  --panel: #ffffff;
+  --ink: #1d2422;
+  --muted: #66706c;
+  --line: #dde1dc;
+  --accent: #1f5f5b;
+  --accent-soft: #e2eeec;
+  --up: #c8323a;
+  --down: #1d8a4e;
+  --warn: #b7791f;
+  --font-display: "Noto Serif TC", "Songti TC", serif;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141917; --panel: #1c2321; --ink: #e6ebe8; --muted: #9aa5a0; --line: #2d3633;
+  --accent: #6fbdb5; --accent-soft: #23332f; --up: #f06a6f; --down: #4cc483; --warn: #e0a84a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141917; --panel: #1c2321; --ink: #e6ebe8; --muted: #9aa5a0; --line: #2d3633;
+  --accent: #6fbdb5; --accent-soft: #23332f; --up: #f06a6f; --down: #4cc483; --warn: #e0a84a; color-scheme: dark }
+[hidden] { display: none !important; }
+.wrap > * { min-width: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 20px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: 1.9rem; margin: 0; letter-spacing: .02em; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 1.25rem; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); font-size: .9rem; }
+.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.up { color: var(--up); } .down { color: var(--down); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { font: inherit; background: none; border: 0; padding: 10px 14px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-color: var(--accent); font-weight: 700; }
+.tabs button:focus-visible, .pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.note { background: var(--accent-soft); border-radius: 8px; padding: 12px 14px; font-size: .9rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 14px; }
+.pick { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; min-width: 0; cursor: pointer; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.pick-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.pick-name { font-weight: 700; font-size: 1.1rem; }
+.chip { display: inline-block; font-size: .78rem; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 500; letter-spacing: .03em; }
+.chip.weak { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat .label { font-size: .75rem; color: var(--muted); letter-spacing: .04em; }
+.stat .val { font-family: var(--font-num); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.meter { height: 6px; border-radius: 3px; background: var(--line); position: relative; }
+.meter span { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); }
+.meter i { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--ink); }
+svg text { fill: var(--muted); font-family: var(--font-num); font-size: 10px; }
+.tablebox { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { padding: 9px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; font-size: .8rem; letter-spacing: .04em; }
+tr.base td { color: var(--muted); font-style: italic; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+.verdict { font-size: .78rem; padding: 2px 8px; border-radius: 4px; font-family: var(--font-body); font-style: normal; }
+.verdict.good { background: color-mix(in srgb, var(--up) 14%, transparent); color: var(--up); }
+.verdict.meh { background: var(--accent-soft); color: var(--muted); }
+.verdict.bad { background: color-mix(in srgb, var(--down) 14%, transparent); color: var(--down); }
+.small-multiples { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 14px; }
+.sm { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+.empty { padding: 28px; text-align: center; color: var(--muted); background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; }
+.section { display: grid; gap: 14px; }
+.kpis { display: flex; flex-wrap: wrap; gap: 24px; }
+.kpi .label { font-size: .78rem; color: var(--muted); }
+.kpi .val { font-family: var(--font-num); font-size: 1.6rem; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); width: min(720px, calc(100vw - 32px)); padding: 18px; }
+dialog::backdrop { background: rgb(0 0 0 / .35); }
+dialog button { font: inherit; background: var(--accent); color: var(--panel); border: 0; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+@media (prefers-reduced-motion: no-preference) { .pick { transition: border-color .15s; } .pick:hover { border-color: var(--accent); } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>M哥選股看板</h1>
+      <div class="sub" id="updated"></div>
+    </div>
+    <div class="sub" id="universe"></div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-picks" aria-selected="true" data-tab="picks">今日推薦</button>
+    <button role="tab" id="tab-score" aria-selected="false" data-tab="score">策略成績單</button>
+    <button role="tab" id="tab-log" aria-selected="false" data-tab="log">推薦對帳</button>
+    <button role="tab" id="tab-cases" aria-selected="false" data-tab="cases">M哥案例</button>
+  </nav>
+
+  <section class="section" id="picks"></section>
+  <section class="section" id="score" hidden></section>
+  <section class="section" id="log" hidden></section>
+  <section class="section" id="cases" hidden></section>
+
+  <p class="sub">勝率與報酬都是用過去資料算出來的，不保證未來會一樣，也不是投資建議。股價未還原除權息。</p>
+</div>
+
+<dialog id="detail"><div id="detail-body"></div><p style="text-align:right;margin:12px 0 0"><button id="detail-close">關閉</button></p></dialog>
+
+<script>
+const DATA = /*__DATA__*/;
+const STRAT = {
+  "S1_一年新高": {name: "一年新高", desc: "沉寂一陣子後創一年新高，而且有法人或融資在買"},
+  "S2_ABC拉回": {name: "ABC 拉回", desc: "長多股量縮休息完，今天出量站上所有均線"},
+  "S5_逆勢籌碼": {name: "逆勢籌碼", desc: "大盤很弱時，外資或融資反而加碼、股價抗跌"},
+  "S6_心理黑洞": {name: "心理黑洞", desc: "跌一大段嚇跑散戶，大錢沒跑，之後出量站回均線"},
+  "T1_投信連買": {name: "投信連買", desc: "投信連續 5 天買超，而且買得夠多（5 天合計超過 20 日均量的 30%）"},
+  "T2_動能": {name: "動能", desc: "過去約半年（跳過最近一個月）漲最多的前幾名，每月第一個交易日換股"},
+  "基準_隨機進場": {name: "隨機進場（對照）", desc: "同一批股票每 10 天隨便買一次"},
+  "基準_大盤指數": {name: "大盤指數（對照）", desc: "每天買加權指數，不含股息"},
+};
+const pct = (x, d = 0) => x == null ? "–" : (x * 100).toFixed(d) + "%";
+const sgn = (x, d = 1) => x == null ? "–" : `<span class="${x > 0 ? "up" : x < 0 ? "down" : ""}">${x > 0 ? "+" : ""}${(x * 100).toFixed(d)}%</span>`;
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const base = DATA.baseline || {};
+
+document.getElementById("updated").textContent = `資料日期 ${DATA.updated}・每個交易日收盤後更新`;
+const u = DATA.universe;
+document.getElementById("universe").innerHTML = `勝率統計來源：${esc(u.source || u.stocks + " 檔")}<br>推薦只看 20 日均量 ≥ ${u.min_vol} 張的股票・統計期間 ${u.from} ～ ${u.to}`;
+
+function verdict(win, med) {
+  if (win == null || base.win_60d == null) return "";
+  const d = win - base.win_60d;
+  if (d >= 0.05 && med > (base.median_60d ?? 0)) return `<span class="verdict good">贏過隨機</span>`;
+  if (d <= -0.03) return `<span class="verdict bad">輸給隨機</span>`;
+  return `<span class="verdict meh">跟隨機差不多</span>`;
+}
+
+function spark(ch, w = 300, h = 90, big = false) {
+  const vals = [...ch.c, ...ch.ma20, ...ch.ma60, ...(big ? ch.ma240 : [])].filter(v => v != null);
+  const lo = Math.min(...vals), hi = Math.max(...vals), n = ch.c.length;
+  const pad = big ? 34 : 4, top = 6, bot = big ? 22 : 4;
+  const x = i => pad + (w - pad - 6) * i / (n - 1);
+  const y = v => top + (h - top - bot) * (1 - (v - lo) / (hi - lo || 1));
+  const line = (arr, cls) => {
+    let d = "", on = false;
+    arr.forEach((v, i) => { if (v == null) { on = false; return; } d += (on ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1); on = true; });
+    return `<path d="${d}" fill="none" ${cls}/>`;
+  };
+  const last = ch.c[n - 1];
+  let grid = "";
+  if (big) {
+    for (let k = 0; k <= 4; k++) {
+      const v = lo + (hi - lo) * k / 4;
+      grid += `<line x1="${pad}" x2="${w - 6}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pad - 4}" y="${y(v) + 3}" text-anchor="end">${v.toFixed(v < 100 ? 1 : 0)}</text>`;
+    }
+    [0, Math.floor(n / 2), n - 1].forEach(i => grid += `<text x="${x(i)}" y="${h - 6}" text-anchor="middle">${ch.d[i]}</text>`);
+  }
+  const area = `M${x(0)} ${h - bot} ` + ch.c.map((v, i) => `L${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ") + ` L${x(n - 1)} ${h - bot} Z`;
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="近半年收盤價與均線">${grid}
+    <path d="${area}" fill="var(--accent-soft)" stroke="none"/>
+    ${big ? line(ch.ma240, 'stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 3"') : ""}
+    ${line(ch.ma60, 'stroke="var(--muted)" stroke-width="1"')}
+    ${line(ch.ma20, 'stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 2"')}
+    ${line(ch.c, 'stroke="var(--accent)" stroke-width="1.8"')}
+    <circle cx="${x(n - 1)}" cy="${y(last)}" r="3.2" fill="var(--accent)"/></svg>`;
+}
+
+function renderPicks() {
+  const el = document.getElementById("picks");
+  const picks = DATA.picks || [];
+  let html = `<div class="note">每天收盤後，用 M哥的四種規則掃過全市場流動性夠的股票。卡片上的「歷史勝率」是這個策略過去所有訊號在 60 個交易日後賺錢的比例，對照組隨機進場是 <b class="num">${pct(base.win_60d)}</b>。點卡片看走勢圖。</div>`;
+  if (!picks.length) {
+    html += `<div class="empty">今天（${DATA.updated}）沒有股票觸發訊號。這很正常，訊號本來就不常出現，明天收盤後會再掃一次。</div>`;
+    el.innerHTML = html; return;
+  }
+  // 同一檔觸發多個策略時合併成一張卡，數字用勝率最高的那個策略
+  const groups = [];
+  picks.forEach(p => {
+    let g = groups.find(x => x.stock_id === p.stock_id);
+    if (!g) { g = {stock_id: p.stock_id, items: []}; groups.push(g); }
+    g.items.push(p);
+  });
+  groups.forEach(g => g.items.sort((a, b) => (b.win60 ?? 0) - (a.win60 ?? 0)));
+  groups.sort((a, b) => (b.items[0].win60 ?? 0) - (a.items[0].win60 ?? 0));
+  const good = groups.filter(g => base.win_60d == null || (g.items[0].win60 ?? 0) >= base.win_60d);
+  const rest = groups.filter(g => !good.includes(g));
+  let gi = 0;
+  const section = (title, sub, list) => {
+    if (!list.length) return;
+    html += `<h2>${title}</h2>${sub ? `<p class="sub" style="margin:-6px 0 0">${sub}</p>` : ""}<div class="grid">`;
+    list.forEach(g => card(g, gi++));
+    html += "</div>";
+  };
+  const ordered = [...good, ...rest];
+  const card = (g, i) => {
+    const p = g.items[0];
+    const ch = DATA.charts[p.stock_id];
+    const chips = g.items.map(q => {
+      const weak = q.win60 != null && base.win_60d != null && q.win60 < base.win_60d;
+      return `<span class="chip ${weak ? "weak" : ""}">${(STRAT[q.strategy] || {name: q.strategy}).name}</span>`;
+    }).join("");
+    const others = g.items.slice(1).map(q => `${(STRAT[q.strategy] || {name: q.strategy}).name} 勝率 ${pct(q.win60)}`).join("・");
+    html += `<article class="pick" tabindex="0" data-i="${i}">
+      <div class="pick-head"><div><span class="pick-name">${esc(p.name)}</span> <span class="sub num">${p.stock_id}・${esc(p.market)}</span></div>
+      <div class="chips">${chips}</div></div>
+      ${ch ? spark(ch) : ""}
+      <div class="stats">
+        <div class="stat"><div class="label">收盤</div><div class="val">${p.close}</div></div>
+        <div class="stat"><div class="label">歷史 60 日勝率</div><div class="val">${pct(p.win60)}</div></div>
+        <div class="stat"><div class="label">60 日報酬中位數</div><div class="val">${sgn(p.med60)}</div></div>
+      </div>
+      <div class="meter" title="策略勝率（色條）與隨機進場（黑線）"><span style="width:${(p.win60 ?? 0) * 100}%"></span><i style="left:${(base.win_60d ?? 0) * 100}%"></i></div>
+      <div class="sub">主要力量：${esc(p.main_force)}・今日量是 20 日均量的 <span class="num">${p.vol_ratio.toFixed(1)}</span> 倍・樣本 <span class="num">${p.hist_n ?? "–"}</span> 筆${p.mom != null ? `・近半年漲幅 ${sgn(p.mom, 0)}` : ""}${p.own_n ? `・這檔過去 ${p.own_n} 次訊號勝率 ${pct(p.own_win60)}` : ""}${others ? `<br>也觸發：${others}` : ""}</div>
+    </article>`;
+  };
+  section(`值得關注 ${good.length} 檔`, "觸發的策略歷史勝率高於隨機進場。", good);
+  section(`其他訊號 ${rest.length} 檔`, "觸發的策略過去沒有贏過隨機進場，只列出來參考，不建議單憑這個買進。", rest);
+  if (!good.length) html = html.replace("<h2>其他訊號", `<div class="empty">今天沒有「歷史勝率高於隨機」的訊號。</div><h2>其他訊號`);
+  el.innerHTML = html;
+  el.querySelectorAll(".pick").forEach(card => {
+    const open = () => showDetail(ordered[+card.dataset.i].items[0]);
+    card.addEventListener("click", open);
+    card.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+  });
+}
+
+function showDetail(p) {
+  const s = STRAT[p.strategy] || {name: p.strategy, desc: ""};
+  const ch = DATA.charts[p.stock_id];
+  document.getElementById("detail-body").innerHTML = `
+    <h2>${esc(p.name)} <span class="sub num">${p.stock_id}</span></h2>
+    <p class="sub">${s.name}：${s.desc}</p>
+    ${ch ? spark(ch, 680, 260, true) : ""}
+    <p class="sub">實線：收盤價・細虛線：20 日線・灰線：60 日線・橘虛線：年線（240 日）</p>
+    <div class="stats">
+      <div class="stat"><div class="label">歷史 120 日勝率</div><div class="val">${pct(p.win120)}</div></div>
+      <div class="stat"><div class="label">120 日報酬中位數</div><div class="val">${sgn(p.med120)}</div></div>
+      <div class="stat"><div class="label">隨機進場 120 日勝率</div><div class="val">${pct(base.win_120d)}</div></div>
+    </div>
+    <p class="sub">出場參考「三破」：收盤同時跌破 20 日線、近 60 天最大量 K 棒低點、前 20 天低點，就隔天賣出。</p>`;
+  document.getElementById("detail").showModal();
+}
+document.getElementById("detail-close").addEventListener("click", () => document.getElementById("detail").close());
+
+function renderScore() {
+  const el = document.getElementById("score");
+  const rows = DATA.summary || [];
+  let html = `<div class="note">上表來源：${esc(DATA.universe.source || "")}，期間 ${esc((rows[0] || {}).window || "")}。「勝率」是買進後第 N 個交易日收盤比買進價高的比例；「中位數」比平均更能代表一般情況，平均容易被少數大漲股拉高。策略要明顯贏過最下面的隨機進場才有用。</div>
+  <div class="tablebox"><table><thead><tr><th>策略</th><th class="num">訊號數</th><th class="num">20 日勝率</th><th class="num">60 日勝率</th><th class="num">60 日中位數</th><th class="num">120 日勝率</th><th class="num">120 日中位數</th><th class="num">三破出場勝率</th><th class="num">三破平均報酬</th><th>判斷</th></tr></thead><tbody>`;
+  rows.forEach(r => {
+    const s = STRAT[r.strategy] || {name: r.strategy};
+    const isBase = r.strategy.startsWith("基準");
+    html += `<tr class="${isBase ? "base" : ""}"><td>${s.name}</td><td class="num">${r.signals}</td><td class="num">${pct(r.win_20d)}</td><td class="num">${pct(r.win_60d)}</td><td class="num">${sgn(r.median_60d)}</td><td class="num">${pct(r.win_120d)}</td><td class="num">${sgn(r.median_120d)}</td><td class="num">${pct(r.trade_win)}</td><td class="num">${sgn(r.trade_mean)}</td><td>${isBase ? "" : verdict(r.win_60d, r.median_60d)}</td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  if ((DATA.summary_long || []).length) {
+    html += `<h2>較長期間：投信連買、動能</h2><p class="sub">這兩個策略不需要一年的歷史，可以看更長一段時間（${esc(DATA.summary_long[0].window || "")}）。</p><div class="tablebox"><table><thead><tr><th>策略</th><th class="num">訊號數</th><th class="num">20 日勝率</th><th class="num">60 日勝率</th><th class="num">60 日中位數</th><th class="num">三破出場勝率</th><th class="num">三破平均報酬</th></tr></thead><tbody>`;
+    DATA.summary_long.forEach(r => {
+      const isBase = r.strategy.startsWith("基準");
+      html += `<tr class="${isBase ? "base" : ""}"><td>${(STRAT[r.strategy] || {name: r.strategy}).name}</td><td class="num">${r.signals}</td><td class="num">${pct(r.win_20d)}</td><td class="num">${pct(r.win_60d)}</td><td class="num">${sgn(r.median_60d)}</td><td class="num">${pct(r.trade_win)}</td><td class="num">${sgn(r.trade_mean)}</td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+  if ((DATA.summary_cases || []).length) {
+    const cb = DATA.summary_cases.find(r => r.strategy === "基準_隨機進場") || {};
+    html += `<h2>對照：只用 M哥案例股（2017 起）</h2><p class="sub">這些股票是 M哥事後挑出來寫的，數字會偏樂觀，只當參考。</p><div class="tablebox"><table><thead><tr><th>策略</th><th class="num">訊號數</th><th class="num">60 日勝率</th><th class="num">60 日中位數</th><th class="num">120 日勝率</th><th class="num">120 日中位數</th></tr></thead><tbody>`;
+    DATA.summary_cases.forEach(r => {
+      const isBase = r.strategy === "基準_隨機進場";
+      html += `<tr class="${isBase ? "base" : ""}"><td>${(STRAT[r.strategy] || {name: r.strategy}).name}</td><td class="num">${r.signals}</td><td class="num">${pct(r.win_60d)}</td><td class="num">${sgn(r.median_60d)}</td><td class="num">${pct(r.win_120d)}</td><td class="num">${sgn(r.median_120d)}</td></tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
+  html += `<h2>每一季的 60 日勝率</h2><p class="sub">看策略是不是每段時間都有效，還是只靠某一季。虛線是隨機進場的整體勝率。</p><div class="small-multiples">`;
+  Object.entries(DATA.walk || {}).forEach(([k, qs]) => {
+    const s = STRAT[k] || {name: k};
+    const w = 260, h = 120, pad = 28, n = qs.length, bw = (w - pad - 6) / Math.max(n, 1);
+    const y = v => 8 + (h - 30) * (1 - v);
+    let bars = [0, .5, 1].map(v => `<line x1="${pad}" x2="${w - 6}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="${pad - 4}" y="${y(v) + 3}" text-anchor="end">${v * 100}%</text>`).join("");
+    qs.forEach((q, i) => {
+      const x0 = pad + i * bw + 2;
+      bars += `<rect x="${x0}" y="${y(q.win)}" width="${Math.max(bw - 4, 2)}" height="${y(0) - y(q.win)}" fill="${q.win >= (base.win_60d ?? .5) ? "var(--accent)" : "var(--muted)"}" opacity="${q.n < 10 ? .45 : 1}"><title>${q.q}：${q.n} 筆，勝率 ${pct(q.win)}</title></rect>`;
+      if (i === 0 || i === n - 1) bars += `<text x="${x0 + bw / 2 - 2}" y="${h - 6}" text-anchor="middle">${q.q.replace("Q", "Q")}</text>`;
+    });
+    if (base.win_60d != null) bars += `<line x1="${pad}" x2="${w - 6}" y1="${y(base.win_60d)}" y2="${y(base.win_60d)}" stroke="var(--ink)" stroke-dasharray="3 3"/>`;
+    html += `<div class="sm"><b>${s.name}</b><svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="${s.name}每季勝率">${bars}</svg></div>`;
+  });
+  el.innerHTML = html + "</div>";
+}
+
+function renderLog() {
+  const el = document.getElementById("log");
+  const log = (DATA.log || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+  const done20 = log.filter(r => r.ret20 != null);
+  const win20 = done20.length ? done20.filter(r => r.ret20 > 0).length / done20.length : null;
+  let html = `<div class="note">每天的推薦都會記下來，假設隔天開盤買進，自動對答案。這是「真的事後才知道」的成績，比回測更可信，累積越多筆越準。</div>
+  <div class="kpis"><div class="kpi"><div class="label">累計推薦</div><div class="val">${log.length}</div></div>
+  <div class="kpi"><div class="label">滿 20 天的筆數</div><div class="val">${done20.length}</div></div>
+  <div class="kpi"><div class="label">20 日實際勝率</div><div class="val">${pct(win20)}</div></div></div>`;
+  if (!log.length) { el.innerHTML = html + `<div class="empty">還沒有推薦紀錄，從今天開始累積。</div>`; return; }
+  html += `<div class="tablebox"><table><thead><tr><th>推薦日</th><th>股票</th><th>策略</th><th class="num">買進價</th><th class="num">至今報酬</th><th class="num">20 日</th><th class="num">60 日</th></tr></thead><tbody>`;
+  log.slice(0, 200).forEach(r => {
+    html += `<tr><td class="num">${r.date}</td><td>${esc(r.name)} <span class="sub num">${r.stock_id}</span></td><td>${(STRAT[r.strategy] || {name: r.strategy}).name}</td><td class="num">${r.entry ?? "等隔天開盤"}</td><td class="num">${sgn(r.ret_now)}</td><td class="num">${sgn(r.ret20)}</td><td class="num">${sgn(r.ret60)}</td></tr>`;
+  });
+  el.innerHTML = html + "</tbody></table></div>";
+}
+
+function renderCases() {
+  const el = document.getElementById("cases");
+  const cs = DATA.cases || [];
+  const withData = cs.filter(c => c["有資料"] === true || c["有資料"] === "True");
+  const hit = withData.filter(c => c["抓到的策略"]);
+  let html = `<div class="note">M哥文章裡寫過的股票，在寫文日期前後 30 天內，規則有沒有發出訊號。有資料的 ${withData.length} 個案例中抓到 ${hit.length} 個。逆勢籌碼、心理黑洞訊號較多，部分「抓到」可能是巧合。</div>
+  <div class="tablebox"><table><thead><tr><th>股票</th><th>觀察日期</th><th>M哥寫的型態</th><th>規則抓到</th></tr></thead><tbody>`;
+  cs.forEach(c => {
+    const has = c["有資料"] === true || c["有資料"] === "True";
+    const got = c["抓到的策略"] ? c["抓到的策略"].split(";").map(k => `<span class="chip">${(STRAT[k] || {name: k}).name}</span>`).join(" ") : (has ? `<span class="sub">沒抓到</span>` : `<span class="sub">沒有資料</span>`);
+    html += `<tr><td>${esc(c["股票"])} <span class="sub num">${esc(c["代號"])}</span></td><td class="num">${esc(c["觀察日期"])}</td><td style="text-align:left;white-space:normal;min-width:180px">${esc(c["型態"])}</td><td style="text-align:left">${got}</td></tr>`;
+  });
+  el.innerHTML = html + "</tbody></table></div>";
+}
+
+renderPicks(); renderScore(); renderLog(); renderCases();
+
+const tabs = document.querySelectorAll(".tabs button");
+function select(name) {
+  tabs.forEach(b => b.setAttribute("aria-selected", b.dataset.tab === name));
+  ["picks", "score", "log", "cases"].forEach(id => document.getElementById(id).hidden = id !== name);
+  try { localStorage.setItem("tab", name); } catch (e) {}
+}
+tabs.forEach(b => b.addEventListener("click", () => select(b.dataset.tab)));
+let start = location.hash.slice(1);
+if (!["picks", "score", "log", "cases"].includes(start)) { try { start = localStorage.getItem("tab") || "picks"; } catch (e) { start = "picks"; } }
+select(start);
+</script>
