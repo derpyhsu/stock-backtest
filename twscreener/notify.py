@@ -148,6 +148,12 @@ def shortterm_section():
     picks = today[today["verdict"] == "推薦"]
     if picks.empty:
         return []
+    odds = {}
+    tp = RESULTS / "shortterm_today.csv"
+    if tp.exists():
+        t = pd.read_csv(tp, dtype={"stock_id": str})
+        if "先到停利" in t:
+            odds = t.set_index("stock_id")[["先到停利", "先到停損"]].to_dict("index")
     lines = [SEP, f"⚡ <b>短線 {len(picks)} 檔</b>（持有 5～10 天）"]
     for i, r in enumerate(picks.itertuples()):
         lines += ["", f"{CIRCLE[i]} <b>{e(r.name)} {r.stock_id}</b>｜{e(r.industry)}｜{e(r.rule)}", f"收盤 {price(r.close)}"]
@@ -157,6 +163,9 @@ def shortterm_section():
         if sz:
             lines.append(sz)
         lines.append(f"📊 歷史 10 日勝率 {r.hist_win10:.0%}，平均 {r.hist_mean10:+.1%}")
+        o = odds.get(r.stock_id)
+        if o:
+            lines.append(f"🎲 過去同樣訊號：先到停利 {o['先到停利']:.0%}、先到停損 {o['先到停損']:.0%}，其餘 10 天內都沒到")
         lines.append(f"✅ {e(short(r.reason))}")
         lines.append(f"⚠️ {e(short(r.risk, 1))}")
     lines += ["", "<i>停利＝同規則歷史 5/10 日報酬前 25%（依個股波動換算）；停損＝近 20 日平均波動 × 3；第 10 天收盤沒到停利就出場</i>"]

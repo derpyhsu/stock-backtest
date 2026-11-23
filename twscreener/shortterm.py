@@ -128,7 +128,17 @@ STOP_MULT = 3
 TOP_CANDIDATES = 15
 
 
-def history_levels(rules, fwd, ctx, atr):
+def first_hit(paths, stop, target):
+    """paths: (n, 10) 每天收盤相對進場的報酬（以波動為單位）。回傳先到停利、先到停損、10 天內都沒到的比例。
+    參考 jakeschincariol/day-trader-skill 的 Time Machine：用過去每次同樣訊號的實際走勢算勝負機率。"""
+    hs, ht = paths <= stop, paths >= target
+    fs = np.where(hs.any(1), hs.argmax(1), 99)
+    ft = np.where(ht.any(1), ht.argmax(1), 99)
+    n = max(len(paths), 1)
+    return (ft < fs).sum() / n, ((fs <= ft) & (fs < 99)).sum() / n
+
+
+def history_levels(rules, fwd, ctx, atr, paths=None):
     """同規則、同大盤狀態（不足 200 筆用整個規則）的 5/10 日勝率、平均；停利用「報酬 ÷ 近 20 日平均波動」的第 75 百分位，
     這樣金融股這種波動小的不會拿到和電子股一樣大的目標。"""
     rows = []
@@ -138,15 +148,25 @@ def history_levels(rules, fwd, ctx, atr):
         df = st.reset_index()[["date", "stock_id"]]
         for h in (5, 10):
             df[f"r{h}"] = fwd[h].stack().reindex(pd.MultiIndex.from_frame(df[["date", "stock_id"]])).to_numpy()
-        df["atr"] = atr.stack().reindex(pd.MultiIndex.from_frame(df[["date", "stock_id"]])).to_numpy()
+        idx = pd.MultiIndex.from_frame(df[["date", "stock_id"]])
+        df["atr"] = atr.stack().reindex(idx).to_numpy()
+        if paths is not None:
+            for k, pth in enumerate(paths, 1):
+                df[f"p{k}"] = pth.stack().reindex(idx).to_numpy()
         df["rule"] = name
         rows.append(df.dropna(subset=["r10"]))
     h = pd.concat(rows).merge(ctx, on="date", how="left")
 
     def m(g):
-        return pd.Series({"樣本數": len(g), "5日勝率": (g["r5"] > 0).mean(), "5日平均": g["r5"].mean(),
-                          "5日停利": (g["r5"] / g["atr"]).quantile(0.75), "10日勝率": (g["r10"] > 0).mean(),
-                          "10日平均": g["r10"].mean(), "10日停利": (g["r10"] / g["atr"]).quantile(0.75)})
+        out = {"樣本數": len(g), "5日勝率": (g["r5"] > 0).mean(), "5日平均": g["r5"].mean(),
+               "5日停利": (g["r5"] / g["atr"]).quantile(0.75), "10日勝率": (g["r10"] > 0).mean(),
+               "10日平均": g["r10"].mean(), "10日停利": (g["r10"] / g["atr"]).quantile(0.75)}
+        if paths is not None:
+            pc = [f"p{k}" for k in range(1, 11)]
+            x = g.dropna(subset=pc + ["atr"])
+            P = x[pc].to_numpy() / x["atr"].to_numpy()[:, None]
+            out["先到停利"], out["先到停損"] = first_hit(P, -STOP_MULT, out["10日停利"])
+        return pd.Series(out)
     return h.groupby("rule").apply(m), h.groupby(["rule", "大盤狀態"]).apply(m)
 
 
@@ -162,7 +182,9 @@ def today():
     names = panel.drop_duplicates("stock_id", keep="last").set_index("stock_id")["name"]
     ind = load_industry()
     atr_all = ret.abs().rolling(20).mean()
-    allp, reg = history_levels(rules, fwd, ctx, atr_all)
+    entry = o.shift(-1)
+    paths = [adj.shift(-k) / entry - 1 for k in range(1, 11)]
+    allp, reg = history_levels(rules, fwd, ctx, atr_all, paths)
     atr = atr_all.loc[d]
     value = (vol * raw).rolling(20).mean().loc[d]
     rows = []
@@ -178,7 +200,7 @@ def today():
                          "5日停利價": round(c * (1 + st["5日停利"] * atr.get(s, 0) + COST), 2),
                          "10日停利價": round(c * (1 + st["10日停利"] * atr.get(s, 0) + COST), 2),
                          "5日勝率": st["5日勝率"], "5日平均": st["5日平均"], "10日勝率": st["10日勝率"],
-                         "10日平均": st["10日平均"], "樣本數": int(st["樣本數"]), "依據組別": basis, "大盤狀態": regime})
+                         "10日平均": st["10日平均"], "先到停利": st["先到停利"], "先到停損": st["先到停損"], "樣本數": int(st["樣本數"]), "依據組別": basis, "大盤狀態": regime})
     out = pd.DataFrame(rows)
     if len(out):
         out["_p"] = out["rule"].map({k: i for i, k in enumerate(PULLBACK)})
