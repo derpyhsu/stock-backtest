@@ -3,8 +3,9 @@
     python -m twscreener.portfolio daily                  # 每晚：執行今天開盤的委託、檢查出場、排明天的委託
     python -m twscreener.portfolio backtest 2024-12-01    # 同一套規則從某天跑到今天，看淨值曲線與最大回撤
 
-規則（v1，全部寫死，中途不改）：
-- 選股：simulate.pick 的無偷看版本（同策略同大盤狀態保守期望值 > 0，依分數取前 5、每產業一檔）。
+規則（全部寫死，中途不改；換版規則見 專案總覽.md「什麼時候校正規則」）：
+- 選股 v2（2026-11-24 起）：月營收加速（twscreener/pead.py，每月 11 號後第一個交易日出訊號），固定停損 -15%。
+  v1（2026-11-23）：simulate.pick 的無偷看版本（同策略同大盤狀態保守期望值 > 0，依分數取前 5、每產業一檔）。
 - 進場：訊號日隔天開盤買；開盤已經低於停損就不買。
 - 部位：打到停損最多虧淨值 1%，單檔最多淨值 20%，最多同時 10 檔，現金不夠就少買。
 - 出場：收盤跌破停損 → 隔天開盤賣；持有滿 60 個交易日 → 隔天開盤賣。不設固定停利（回測顯示會砍掉大漲股）。
@@ -21,6 +22,7 @@ import pandas as pd
 from .fundamentals import load_industry
 from .market import RESULTS, load_market_index, load_panel
 from .review import market_context
+from . import pead
 from .simulate import pick, prices
 
 PAPER = RESULTS / "paper"
@@ -149,11 +151,23 @@ def _inputs():
     return raw, adj, opn, vol, raw_open, sig, ctx, load_industry()
 
 
-def run(days, acct, inputs):
+def _names(sig):
+    latest = sorted((RESULTS.parent / "data" / "daily").glob("*.csv"))[-1]
+    n = pd.read_csv(latest, dtype={"stock_id": str}, usecols=["stock_id", "name"])
+    return {**dict(zip(sig["stock_id"], sig["name"])), **dict(zip(n["stock_id"], n["name"]))}
+
+
+def run(days, acct, inputs, version=None):
     raw, adj, opn, vol, raw_open, sig, ctx, ind = inputs
+    v2 = (version or VERSION) == "v2"
+    if v2:
+        taiex, names = load_market_index()["taiex"], _names(sig)
     for d in days:
         acct.execute(d, raw_open.loc[d])
-        c, _ = pick(d, sig, ctx, raw, adj, vol, ind)
+        if v2:
+            c, _ = pead.pick(d, sig, ctx, raw, adj, vol, ind, taiex, names)
+        else:
+            c, _ = pick(d, sig, ctx, raw, adj, vol, ind)
         acct.plan(d, raw.loc[d], c if len(c) else pd.DataFrame(columns=["stock_id"]))
     return acct
 
@@ -168,11 +182,11 @@ def stats(nav, taiex):
             "賺錢月份": f"{(m > 0).sum()}/{len(m)}", "最差月": f"{m.min():+.1%}" if len(m) else "-"}
 
 
-# 校正規則（2026-11-23 定，門檻來自 2024-12～2026-11 的同規則回測，2022 資料補完後更新一次）
-VERSION = "v1"
-DD_WATCH, DD_STOP = -0.25, -0.39      # 回測最差回撤 -38.5%（2022 起資料，2026-11-23 重測）
-STREAK_WATCH, STREAK_STOP = 16, 20     # 連虧筆數：回測重抽 95 / 99 百分位
-ROLL_N, ROLL_MIN = 30, -0.028          # 最近 30 筆平均報酬低於回測第 5 百分位
+# 校正規則（2026-11-23 定）。v2 門檻來自 2022-08～2026-11 的 v2 回測（results/重測_2022/pead_portfolio.txt）
+VERSION = "v2"                         # v1 用到 2026-11-23；v2 從 2026-11-24 起
+DD_WATCH, DD_STOP = -0.20, -0.32      # v2 回測最差回撤 -31.2%
+STREAK_WATCH, STREAK_STOP = 14, 18     # 連虧筆數：v2 回測 195 筆重抽 95 / 99 百分位
+ROLL_N, ROLL_MIN = 30, -0.036          # 最近 30 筆平均報酬低於 v2 回測第 5 百分位
 
 
 def check():
