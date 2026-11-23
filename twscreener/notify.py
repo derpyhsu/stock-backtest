@@ -118,7 +118,7 @@ def agent_section():
         if x is not None:
             stop = x["停損價"]
             rr = (x["60日停利價"] - r.close) / (r.close - x["停損價"]) if r.close > x["停損價"] else float("nan")
-            warn = "，⚠️ 不到 1，部位再減半" if rr < 1 else ""
+            warn = "，⚠️ 不到 1，部位再減半" if round(rr, 1) < 1 else ""
             lines.append(f"🎯 60日目標 <b>{price(x['60日目標價'])}</b>（樂觀 {price(x['60日停利價'])}，報酬風險比 {rr:.1f}{warn}）")
             how = "，依近期波動放寬" if str(x.get("停損依據", "")) == "依近期波動放寬" else ""
             lines.append(f"🛑 停損 <b>{price(stop)}</b>（{stop / r.close - 1:+.0%}{how}）")
@@ -160,7 +160,7 @@ def shortterm_section():
     for i, r in enumerate(picks.itertuples()):
         lines += ["", f"{CIRCLE[i]} <b>{e(r.name)} {r.stock_id}</b>｜{e(r.industry)}｜{e(r.rule)}", f"收盤 {price(r.close)}"]
         rr = (r.tp10 - r.close) / (r.close - r.stop) if r.close > r.stop else float("nan")
-        warn = "，⚠️ 不到 1，部位再減半" if rr < 1 else ""
+        warn = "，⚠️ 不到 1，部位再減半" if round(rr, 1) < 1 else ""
         lines.append(f"🎯 停利 5日 <b>{price(r.tp5)}</b>｜10日 <b>{price(r.tp10)}</b>（報酬風險比 {rr:.1f}{warn}）")
         lines.append(f"🛑 停損 <b>{price(r.stop)}</b>（{r.stop / r.close - 1:+.0%}）")
         sz = size_line(r.close, r.stop)
