@@ -44,6 +44,13 @@ description: 每晚從規則篩出的候選股中，查新聞與重大訊息，�
 11. 寫入 `results/shortterm_picks_log.csv`（pick_date, signal_date, stock_id, name, industry, rule, close, stop, tp5, tp10, hist_win10, hist_mean10, verdict, reason, risk, news, reviewer），價位照抄候選表；同一天重跑先刪當天舊列，**過去的列不可修改**。在當天的 md 加一段「短線」。notify 會把它放在中長線推薦後面。
 12. 對帳：`python3 -m twscreener.shortterm check`（5/10 日後報酬 vs 同日隨機買股），每月健檢時看；累積 2 個月以上再判斷新聞複審有沒有幫助。
 
+## 風控關卡（參考 day-trader-skill 的 trader-risk）
+
+- 每檔都要有停損價；沒有的不推。
+- 報酬風險比＝（樂觀停利 − 收盤）÷（收盤 − 停損）。不到 1 的，推播會標示「部位再減半」；在風險欄說明為什麼還值得。
+- 同一晚中長線＋短線合計，全部打到停損的總虧損不超過資金 6%（每檔 1% 計算，最多 6 檔）。
+- 同一產業同時最多 2 檔（中長線＋短線合計）。
+
 ## 驗收
 
 每月健檢（`twscreener/review.py`）比較三組 60 日報酬：agent 推薦 vs 候選表排序前 3 名 vs 隨機買股；也比較「否決」的後續表現。累積 3 個月以上才下結論。
