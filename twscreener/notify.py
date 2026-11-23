@@ -239,26 +239,8 @@ def msg_short(short_p, odds):
 
 
 def msg_more(long_v, short_v, picks):
-    """否決、規則訊號和名詞說明，收在可展開的區塊裡。"""
+    """名詞說明，收在可展開的區塊裡。沒選的股票和規則訊號不推：收到的人本來就不知道它們，看了也沒用（看板上有）。"""
     lines = []
-    vetoed = pd.concat([long_v, short_v]) if len(long_v) or len(short_v) else pd.DataFrame()
-    if len(vetoed):
-        groups, last = {}, ""
-        for name, reason in zip(vetoed["name"], vetoed["reason"]):
-            reason = last if str(reason).startswith("同上") and last else str(reason)
-            groups.setdefault(reason, []).append(name)
-            last = reason
-        v = [f"・{e('、'.join(dict.fromkeys(n)))}：{e(short(r, 1))}" for r, n in groups.items()]
-        lines.append(f"❌ <b>沒選的 {vetoed['name'].nunique()} 檔</b>")
-        lines.append("<blockquote expandable>" + "\n".join(v) + "</blockquote>")
-    if len(picks):
-        sig = []
-        for strategy, g in picks.groupby("strategy", sort=False):
-            win = g["win60"].dropna()
-            tag = f"（勝率 {win.mean():.0%}）" if len(win) else ""
-            sig.append(f"・{e(strategy.split('_', 1)[-1])}{tag}：{e('、'.join(g['name'].astype(str)))}")
-        lines.append(f"📊 <b>規則訊號 {len(picks)} 檔次</b>")
-        lines.append("<blockquote expandable>" + "\n".join(sig) + "</blockquote>")
     lines.append("📖 <b>怎麼看</b>")
     lines.append("<blockquote expandable>"
                  "目標＝同組歷史報酬中位數，樂觀＝前 25%，當參考，不要掛單賣（回測發現固定停利會砍掉大漲股）。\n"
@@ -276,8 +258,8 @@ def build_messages():
     day = picks["date"].iat[0] if len(picks) else pd.Timestamp.today().date()
     long_p, long_v, lv = load_long()
     short_p, short_v, odds = load_short()
-    msgs = [msg_overview(day, long_p, lv, short_p, picks), msg_long(long_p, lv), msg_short(short_p, odds),
-            msg_more(long_v, short_v, picks)]
+    msgs = [m for m in (msg_overview(day, long_p, lv, short_p, picks), msg_long(long_p, lv), msg_short(short_p, odds)) if m]
+    msgs[-1] += "\n\n" + msg_more(long_v, short_v, picks)  # 說明接在最後一則後面，不另發
     out = []
     for m in msgs:
         if m and len(m) > LIMIT:  # 太長就從段落切開
