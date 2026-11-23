@@ -1,6 +1,6 @@
 ---
 name: daily-update
-description: 台股全市場每日更新：抓當天行情、除權息、月營收，重跑回測與今日選股，發佈看板並同步 GitHub。Use when the user asks to 更新看板、跑今天的選股、補資料，或排程每晚 22:00 觸發時。
+description: 台股全市場每日更新：抓當天行情、除權息、月營收，重跑回測與今日選股，更新看板並同步 GitHub。Use when the user asks to 更新看板、跑今天的選股、補資料，或排程每晚 22:00 觸發時。
 ---
 
 # daily-update
@@ -13,7 +13,7 @@ description: 台股全市場每日更新：抓當天行情、除權息、月營�
 2. `python3 -m twscreener.adjust`：補除權息。資料往前補到更早的月份時，用 `--start YYYY-MM-01`。
 3. `python3 -u -m twscreener.fundamentals revenue`：最新一個月的月營收（OpenAPI），並重試還沒抓到的歷史月份（公開資訊觀測站時好時壞，抓不到就下次再試）。
 4. `python3 -m twscreener.market all`：全市場回測、今日掃描、推薦對帳，輸出 `results/` 和 `dashboard/index.html`。接著 `python3 -m twscreener.report` 更新 `results/回測報告.md`（期望值、扣成本、分市況）。
-5. 發佈 `dashboard/index.html`（Claude 用 Artifact 工具，同一路徑、同一網址）。
+5. 看板只放 GitHub Pages（步驟 6 會更新）。不要用 Artifact 工具發佈：使用者在上班，不想讓它在 App 側邊自動打開。
 6. `bash scripts/sync_github.sh`：同步到 GitHub。腳本會擋下 `.env`。GitHub Pages 也從這裡更新（https://derpyhsu.github.io/stock-backtest/dashboard/，手機不用登入就能看）。
 7. 照 `skill/agent-review/SKILL.md` 做 agent 複審，選出今日推薦。
 7b. `python3 -m twscreener.notify`：把今天的選股推播到 Telegram。需要環境變數 `TELEGRAM_BOT_TOKEN`；沒有就略過。收件人 ID 存在 `.env`。先用 `--dry` 可以只看訊息不送。

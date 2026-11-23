@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .sizing import describe as size_line
+
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "results"
 ENV = ROOT / ".env"
@@ -118,6 +120,9 @@ def agent_section():
             lines.append(f"🎯 60日目標 <b>{price(x['60日目標價'])}</b>（樂觀 {price(x['60日停利價'])}）")
             how = "，依近期波動放寬" if str(x.get("停損依據", "")) == "依近期波動放寬" else ""
             lines.append(f"🛑 停損 <b>{price(stop)}</b>（{stop / r.close - 1:+.0%}{how}）")
+            sz = size_line(r.close, stop)
+            if sz:
+                lines.append(sz)
             lines.append("📅 " + "｜".join(f"{h}日 {price(x[f'{h}日目標價'])}" for h in (30, 90, 120)))
         lines.append(f"✅ {e(short(r.reason))}")
         lines.append(f"⚠️ {e(short(r.risk, 1))}")
@@ -148,6 +153,9 @@ def shortterm_section():
         lines += ["", f"{CIRCLE[i]} <b>{e(r.name)} {r.stock_id}</b>｜{e(r.industry)}｜{e(r.rule)}", f"收盤 {price(r.close)}"]
         lines.append(f"🎯 停利 5日 <b>{price(r.tp5)}</b>｜10日 <b>{price(r.tp10)}</b>")
         lines.append(f"🛑 停損 <b>{price(r.stop)}</b>（{r.stop / r.close - 1:+.0%}）")
+        sz = size_line(r.close, r.stop)
+        if sz:
+            lines.append(sz)
         lines.append(f"📊 歷史 10 日勝率 {r.hist_win10:.0%}，平均 {r.hist_mean10:+.1%}")
         lines.append(f"✅ {e(short(r.reason))}")
         lines.append(f"⚠️ {e(short(r.risk, 1))}")
@@ -181,7 +189,7 @@ def build_message():
     else:
         lines += signals_section(picks)
     lines += [SEP, f'👉 <a href="{DASHBOARD_URL}">打開看板</a>：走勢圖、完整理由與新聞連結',
-              "<i>歷史統計加新聞判斷，不保證未來，請自行評估部位。</i>"]
+              "<i>💰 張數＝每筆打到停損最多虧總資金 1%、單檔最多 20%，用自己的資金等比例換算。歷史統計加新聞判斷，不保證未來。</i>"]
     return "\n".join(lines)
 
 
