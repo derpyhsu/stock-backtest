@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .market import load_market_index
 from .sizing import size
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -238,6 +239,39 @@ def msg_short(short_p, odds):
     return "\n\n".join(out)
 
 
+def msg_paper():
+    """模擬帳戶：完全照規則買賣（twscreener/portfolio.py）。"""
+    d = RESULTS / "paper"
+    if not (d / "nav.csv").exists():
+        return None
+    nav = pd.read_csv(d / "nav.csv")
+    if nav.empty:
+        return None
+    first, last = nav.iloc[0], nav.iloc[-1]
+    lines = ["🤖 <b>模擬帳戶</b>・完全照規則，不經人手"]
+    body = [f"淨值 <b>{last['淨值'] / 1e4:,.1f} 萬</b>（起始 {first['淨值'] / 1e4:,.0f} 萬，{last['淨值'] / first['淨值'] - 1:+.1%}）",
+            f"持股 {int(last['持股數'])} 檔・現金 {last['現金'] / 1e4:,.1f} 萬"]
+    try:
+        tx = load_market_index()["taiex"]
+        t0, t1 = tx.asof(pd.Timestamp(first["date"])), tx.asof(pd.Timestamp(last["date"]))
+        body.append(f"同期加權指數 {t1 / t0 - 1:+.1%}")
+    except Exception:
+        pass
+    lines.append("<blockquote>" + "\n".join(body) + "</blockquote>")
+    o = d / "orders.csv"
+    orders = pd.read_csv(o, dtype={"stock_id": str}) if o.exists() and o.stat().st_size > 0 else pd.DataFrame()
+    if len(orders):
+        lines.append("明天開盤：")
+        for r in orders.itertuples():
+            if r.side == "賣":
+                lines.append(f"・🔴 賣 <b>{e(r.name)}</b> {int(r.shares):,} 股（{e(r.reason)}）")
+            else:
+                lines.append(f"・🟢 買 <b>{e(r.name)}</b> {int(r.shares):,} 股，停損 {price(r.stop)}（開盤低於停損就不買）")
+    else:
+        lines.append("明天沒有買賣。")
+    return "\n".join(lines)
+
+
 def msg_more(long_v, short_v, picks):
     """名詞說明，收在可展開的區塊裡。沒選的股票和規則訊號不推：收到的人本來就不知道它們，看了也沒用（看板上有）。"""
     lines = []
@@ -258,7 +292,8 @@ def build_messages():
     day = picks["date"].iat[0] if len(picks) else pd.Timestamp.today().date()
     long_p, long_v, lv = load_long()
     short_p, short_v, odds = load_short()
-    msgs = [m for m in (msg_overview(day, long_p, lv, short_p, picks), msg_long(long_p, lv), msg_short(short_p, odds)) if m]
+    msgs = [m for m in (msg_overview(day, long_p, lv, short_p, picks), msg_long(long_p, lv), msg_short(short_p, odds),
+                        msg_paper()) if m]
     msgs[-1] += "\n\n" + msg_more(long_v, short_v, picks)  # 說明接在最後一則後面，不另發
     out = []
     for m in msgs:
