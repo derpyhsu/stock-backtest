@@ -26,6 +26,8 @@ DAILY_INDEX = ROOT / "data" / "daily_index"
 UA = {"User-Agent": "Mozilla/5.0"}
 GAP = {"twse": 3.0, "tpex": 2.0}  # 兩次請求之間至少間隔幾秒，太快會被證交所暫時封鎖
 
+PRICES_ONLY = False
+FILL_CHIPS = False  # 回補舊資料時只抓價格（跳過法人、融資），請求少三分之二；之後用 --fill-chips 補
 _last = {"twse": 0.0, "tpex": 0.0}
 _lock = {"twse": threading.Lock(), "tpex": threading.Lock()}
 
@@ -89,6 +91,8 @@ def twse_day(d):
         rows[code] = {"stock_id": code, "name": r[1].strip(), "market": "上市",
                       "open": _num(r[5]), "high": _num(r[6]), "low": _num(r[7]), "close": _num(r[8]),
                       "vol": _num(r[2]) / 1000}
+    if PRICES_ONLY:
+        return list(rows.values()), {"taiex": taiex}
     inst = _get("twse", f"{base}/fund/T86?date={ds}&selectType=ALLBUT0999&response=json")
     mkt_foreign = 0.0
     for r in inst.get("data", []) if inst.get("stat") == "OK" else []:
@@ -122,6 +126,8 @@ def tpex_day(d):
         rows[code] = {"stock_id": code, "name": r[1].strip(), "market": "上櫃",
                       "open": _num(r[4]), "high": _num(r[5]), "low": _num(r[6]), "close": _num(r[2]),
                       "vol": _num(r[8]) / 1000}
+    if PRICES_ONLY:
+        return list(rows.values())
     inst = _get("tpex", f"{base}/insti/dailyTrade?type=Daily&sect=AL&date={ds}&response=json")
     for t in inst.get("tables") or []:
         for r in t.get("data") or []:
@@ -145,8 +151,12 @@ def fetch_day(d):
     if none.exists():
         return "skip"
     if out.exists():
+        head = out.open(encoding="utf-8").readline()
+        if FILL_CHIPS:  # 只重抓「只有價格」的舊檔
+            if "foreign_net" in head:
+                return "skip"
         # 白天抓的檔案還沒有融資（晚上才公布），最近幾天的要重抓
-        if "margin_bal" in out.open(encoding="utf-8").readline() or (date.today() - d).days > 5:
+        elif "margin_bal" in head or (date.today() - d).days > 5:
             return "skip"
     twse_rows, idx = twse_day(d)
     if twse_rows is None:
@@ -173,7 +183,11 @@ def main():
     ap.add_argument("--start", default=None, help="預設：從最後一個已抓的日子往後補")
     ap.add_argument("--end", default=date.today().isoformat())
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--prices-only", action="store_true", help="只抓價格，跳過法人與融資（回補舊資料用）")
+    ap.add_argument("--fill-chips", action="store_true", help="把只有價格的舊檔重抓成完整資料")
     args = ap.parse_args()
+    global PRICES_ONLY, FILL_CHIPS
+    PRICES_ONLY, FILL_CHIPS = args.prices_only, args.fill_chips
     DAILY.mkdir(parents=True, exist_ok=True)
     DAILY_INDEX.mkdir(parents=True, exist_ok=True)
     if args.start:
