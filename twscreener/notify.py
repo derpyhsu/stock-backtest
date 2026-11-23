@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .sizing import describe as size_line
+from .sizing import size
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "results"
@@ -66,10 +66,14 @@ e = lambda x: html.escape(str(x))
 
 
 def price(v):
-    """台股價位：100 元以上取整數，以下取一位小數。"""
+    """依台股升降單位取到實際掛得出去的價位（例如 343.69 → 343.5、39.27 → 39.25），再去掉多餘的 0。"""
     if pd.isna(v):
         return "-"
-    return f"{v:,.0f}" if v >= 100 else f"{v:.1f}"
+    tick = 0.01 if v < 10 else 0.05 if v < 50 else 0.1 if v < 100 else 0.5 if v < 500 else 1 if v < 1000 else 5
+    v = round(round(v / tick) * tick, 2)
+    if v >= 1000:
+        return f"{v:,.0f}"
+    return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
 def short(text, n=2):
@@ -78,141 +82,228 @@ def short(text, n=2):
     return "；".join(parts[:n])
 
 
-def market_line():
+WEEK = "一二三四五六日"
+LIMIT = 4000  # Telegram 一則上限 4096 字
+
+
+def short_qty(entry, stop):
+    """每 100 萬買多少：'2 張'、'零股 110 股'。"""
+    z = size(entry, stop)
+    if not z or z["shares"] == 0:
+        return "-", 0
+    if z["lots"] >= 1:
+        q = f"{z['lots']} 張" + (f" {z['odd']} 股" if z["odd"] >= 100 else "")
+    else:
+        q = f"{z['shares']} 股"
+    return q, z["amount"]
+
+
+def day_label(d):
+    d = pd.Timestamp(d)
+    return f"{d.month}/{d.day}（{WEEK[d.weekday()]}）"
+
+
+def next_trading_day(d):
+    d = pd.Timestamp(d) + pd.Timedelta(days=1)
+    while d.weekday() >= 5:
+        d += pd.Timedelta(days=1)
+    return d
+
+
+def market_info():
     path = RESULTS / "candidates_today.csv"
-    if not path.exists():
-        return None
-    c = pd.read_csv(path)
-    regime = c["大盤狀態"].iat[0] if "大盤狀態" in c and len(c) else None
+    regime, dd = None, None
+    if path.exists():
+        c = pd.read_csv(path)
+        regime = c["大盤狀態"].iat[0] if "大盤狀態" in c and len(c) else None
     try:
         from .review import market_context
         dd = market_context()["大盤離高點"].dropna().iat[-1]
-        return f"大盤：<b>{e(regime)}</b>（距 120 日高點 {dd:+.0%}）"
     except Exception:
-        return f"大盤：<b>{e(regime)}</b>" if regime else None
+        pass
+    return regime, dd
 
 
-def agent_section():
-    """今天的 agent 推薦（results/agent_picks_log.csv），附停損與目標價。"""
+def load_long():
+    """今天的中長線推薦（同一天重選時用最新收盤那一批）與否決，附停損目標。"""
     path = RESULTS / "agent_picks_log.csv"
     if not path.exists():
-        return []
+        return pd.DataFrame(), pd.DataFrame(), {}
     log = pd.read_csv(path, dtype={"stock_id": str})
     if log.empty:
-        return []
+        return pd.DataFrame(), pd.DataFrame(), {}
     day = log["pick_date"].max()
     today = log[log["pick_date"] == day]
-    today = today[today["signal_date"] == today["signal_date"].max()]  # 同一天重選時用最新收盤那一批
-    picks = today[today["verdict"] == "推薦"]
-    if picks.empty:
-        return []
+    today = today[today["signal_date"] == today["signal_date"].max()]
     lv = {}
     lpath = RESULTS / "agent_levels_today.csv"
     if lpath.exists():
         lt = pd.read_csv(lpath, dtype={"stock_id": str})
         lv = {r["stock_id"]: r for _, r in lt[lt["pick_date"] == day].iterrows()}
-    lines = [SEP, f"🤖 <b>今日推薦 {len(picks)} 檔</b>"]
-    for i, r in enumerate(picks.itertuples()):
-        lines += ["", f"{CIRCLE[i]} <b>{e(r.name)} {r.stock_id}</b>｜{e(r.industry)}", f"收盤 {price(r.close)}"]
-        x = lv.get(r.stock_id)
-        if x is not None:
-            stop = x["停損價"]
-            rr = (x["60日停利價"] - r.close) / (r.close - x["停損價"]) if r.close > x["停損價"] else float("nan")
-            warn = "，⚠️ 不到 1，部位再減半" if round(rr, 1) < 1 else ""
-            lines.append(f"🎯 60日目標 <b>{price(x['60日目標價'])}</b>（樂觀 {price(x['60日停利價'])}，報酬風險比 {rr:.1f}{warn}）")
-            how = "，依近期波動放寬" if str(x.get("停損依據", "")) == "依近期波動放寬" else ""
-            lines.append(f"🛑 停損 <b>{price(stop)}</b>（{stop / r.close - 1:+.0%}{how}）")
-            sz = size_line(r.close, stop)
-            if sz:
-                lines.append(sz)
-            lines.append("📅 " + "｜".join(f"{h}日 {price(x[f'{h}日目標價'])}" for h in (30, 90, 120)))
-        lines.append(f"✅ {e(short(r.reason))}")
-        lines.append(f"⚠️ {e(short(r.risk, 1))}")
-    vetoed = today[today["verdict"] == "否決"]
-    if len(vetoed):
-        lines += ["", f"❌ <b>否決 {len(vetoed)} 檔</b>"]
-        for reason, g in vetoed.groupby("reason", sort=False):
-            lines.append(f"・{e('、'.join(g['name']))}：{e(short(reason, 1))}")
-    if lv:
-        lines += ["", "<i>目標＝同組歷史報酬中位數，樂觀＝前 25%；停損＝八成賺錢的歷史訊號都沒跌破的價位，盤勢亂時依波動放寬；開盤就跳空跌破停損的，當天不要進場</i>"]
-    return lines
+    return today[today["verdict"] == "推薦"], today[today["verdict"] == "否決"], lv
 
 
-def shortterm_section():
-    """今天的 agent 短線推薦（results/shortterm_picks_log.csv），持有 5～10 天。"""
+def load_short():
     path = RESULTS / "shortterm_picks_log.csv"
     if not path.exists():
-        return []
+        return pd.DataFrame(), pd.DataFrame(), {}
     log = pd.read_csv(path, dtype={"stock_id": str})
     if log.empty:
-        return []
+        return pd.DataFrame(), pd.DataFrame(), {}
     today = log[log["pick_date"] == log["pick_date"].max()]
-    picks = today[today["verdict"] == "推薦"]
-    if picks.empty:
-        return []
     odds = {}
     tp = RESULTS / "shortterm_today.csv"
     if tp.exists():
         t = pd.read_csv(tp, dtype={"stock_id": str})
         if "先到停利" in t:
             odds = t.set_index("stock_id")[["先到停利", "先到停損"]].to_dict("index")
-    lines = [SEP, f"⚡ <b>短線 {len(picks)} 檔</b>（持有 5～10 天）"]
-    for i, r in enumerate(picks.itertuples()):
-        lines += ["", f"{CIRCLE[i]} <b>{e(r.name)} {r.stock_id}</b>｜{e(r.industry)}｜{e(r.rule)}", f"收盤 {price(r.close)}"]
-        rr = (r.tp10 - r.close) / (r.close - r.stop) if r.close > r.stop else float("nan")
-        warn = "，⚠️ 不到 1，部位再減半" if round(rr, 1) < 1 else ""
-        lines.append(f"🎯 停利 5日 <b>{price(r.tp5)}</b>｜10日 <b>{price(r.tp10)}</b>（報酬風險比 {rr:.1f}{warn}）")
-        lines.append(f"🛑 停損 <b>{price(r.stop)}</b>（{r.stop / r.close - 1:+.0%}）")
-        sz = size_line(r.close, r.stop)
-        if sz:
-            lines.append(sz)
-        lines.append(f"📊 歷史 10 日勝率 {r.hist_win10:.0%}，平均 {r.hist_mean10:+.1%}")
-        o = odds.get(r.stock_id)
-        if o:
-            lines.append(f"🎲 過去同樣訊號：先到停利 {o['先到停利']:.0%}、先到停損 {o['先到停損']:.0%}，其餘 10 天內都沒到")
-        lines.append(f"✅ {e(short(r.reason))}")
-        lines.append(f"⚠️ {e(short(r.risk, 1))}")
-    lines += ["", "<i>停利＝同規則歷史 5/10 日報酬前 25%（依個股波動換算）；停損＝近 20 日平均波動 × 3；第 10 天收盤沒到停利就出場</i>"]
-    return lines
+    return today[today["verdict"] == "推薦"], today[today["verdict"] == "否決"], odds
 
 
-def signals_section(picks):
-    lines = [SEP, f"📊 <b>各策略訊號</b>（{len(picks)} 檔次）"]
-    for strategy, g in picks.groupby("strategy", sort=False):
-        label = strategy.split("_", 1)[-1]
-        win = g["win60"].dropna()
-        tag = f"（歷史勝率 {win.mean():.0%}）" if len(win) else ""
-        names = "、".join(g["name"].astype(str))
-        lines.append(f"・<b>{e(label)}</b>{tag}：{e(names)}")
-    return lines
+def pct(a, b):
+    return f"{a / b - 1:+.0%}"
 
 
-def build_message():
-    path = RESULTS / "picks_today.csv"
-    picks = pd.read_csv(path, dtype={"stock_id": str}) if path.exists() else pd.DataFrame()
-    day = picks["date"].iat[0] if len(picks) else ""
-    lines = [f"📈 <b>台股選股日報</b>　{day} 收盤，適用隔天開盤"]
-    m = market_line()
-    if m:
-        lines.append(m)
-    lines += agent_section()
-    lines += shortterm_section()
-    if picks.empty:
-        lines += [SEP, "今天沒有股票符合條件。"]
-    else:
-        lines += signals_section(picks)
-    lines += [SEP, f'👉 <a href="{DASHBOARD_URL}">打開看板</a>：走勢圖、完整理由與新聞連結',
-              "<i>💰 張數＝每筆打到停損最多虧總資金 1%、單檔最多 20%，用自己的資金等比例換算。歷史統計加新聞判斷，不保證未來。</i>"]
+def rr_text(target, close, stop):
+    rr = (target - close) / (close - stop) if close > stop else float("nan")
+    return f"{rr:.1f}", round(rr, 1) < 1
+
+
+def msg_overview(day, long_p, lv, short_p, picks):
+    regime, dd = market_info()
+    nxt = next_trading_day(day)
+    lines = [f"📈 <b>台股日報｜{day_label(day)}收盤</b>"]
+    if regime:
+        lines.append(f"大盤 <b>{e(regime)}</b>" + (f"・距高點 {dd:+.0%}" if dd is not None else ""))
+    lines.append(f"<i>適用 {day_label(nxt)}開盤；開盤就跌破停損的不要進場</i>")
+    if len(long_p):
+        lines += ["", "🏛 <b>中長線</b>・抱約 60 天"]
+        for i, r in enumerate(long_p.itertuples()):
+            x = lv.get(r.stock_id)
+            tail = f"停損 {price(x['停損價'])}・目標 {price(x['60日目標價'])}" if x is not None else ""
+            lines.append(f"{CIRCLE[i]} <b>{e(r.name)}</b> {price(r.close)}　{tail}")
+    if len(short_p):
+        lines += ["", "⚡ <b>短線</b>・抱 5～10 天"]
+        for i, r in enumerate(short_p.itertuples()):
+            lines.append(f"{CIRCLE[i]} <b>{e(r.name)}</b> {price(r.close)}　停損 {price(r.stop)}・停利 {price(r.tp10)}")
+    if not len(long_p) and not len(short_p):
+        lines += ["", "今天沒有推薦。" if not len(picks) else f"今天沒有 agent 推薦，規則訊號 {len(picks)} 檔次見下面。"]
+    lines += ["", "👇 每檔的理由、風險和要買多少在下面"]
     return "\n".join(lines)
 
 
+def card(i, r, close, stop, rows, reason, risk, qty_line):
+    lines = [f"{CIRCLE[i]} <b>{e(r.name)}</b> {r.stock_id}　<i>{e(r.industry)}</i>"]
+    body = [f"收盤 {price(close)}　🛑 停損 <b>{price(stop)}</b> {pct(stop, close)}"] + rows + [qty_line]
+    lines.append("<blockquote>" + "\n".join(body) + "</blockquote>")
+    lines.append(f"✅ {e(short(reason))}")
+    if str(risk) not in ("", "nan"):
+        lines.append(f"⚠️ {e(short(risk, 1))}")
+    return "\n".join(lines)
+
+
+def qty_text(close, stop, half):
+    q, amt = short_qty(close, stop)
+    note = "（報酬風險比不到 1，建議再減半）" if half else ""
+    return f"💰 每 100 萬買 {q}，約 {amt / 1e4:.0f} 萬{note}"
+
+
+def msg_long(long_p, lv):
+    if not len(long_p):
+        return None
+    out = ["🏛 <b>中長線推薦</b>・抱約 60 天"]
+    for i, r in enumerate(long_p.itertuples()):
+        x = lv.get(r.stock_id)
+        if x is None:
+            out.append(f"{CIRCLE[i]} <b>{e(r.name)}</b> {r.stock_id}\n✅ {e(short(r.reason))}")
+            continue
+        rr, half = rr_text(x["60日停利價"], r.close, x["停損價"])
+        rows = [f"🎯 60 天目標 <b>{price(x['60日目標價'])}</b>・樂觀 {price(x['60日停利價'])}・報酬風險比 {rr}",
+                "📅 " + "・".join(f"{h}天 {price(x[f'{h}日目標價'])}" for h in (30, 90, 120))]
+        out.append(card(i, r, r.close, x["停損價"], rows, r.reason, r.risk, qty_text(r.close, x["停損價"], half)))
+    return "\n\n".join(out)
+
+
+def msg_short(short_p, odds):
+    if not len(short_p):
+        return None
+    out = ["⚡ <b>短線推薦</b>・抱 5～10 天，第 10 天收盤沒到停利就出場"]
+    for i, r in enumerate(short_p.itertuples()):
+        rr, half = rr_text(r.tp10, r.close, r.stop)
+        rows = [f"🎯 停利 5 天 <b>{price(r.tp5)}</b>・10 天 <b>{price(r.tp10)}</b>・報酬風險比 {rr}"]
+        o = odds.get(r.stock_id)
+        if o:
+            rows.append(f"🎲 過去同訊號：先到停利 {o['先到停利']:.0%}・先到停損 {o['先到停損']:.0%}")
+        out.append(card(i, r, r.close, r.stop, rows, r.reason, r.risk, qty_text(r.close, r.stop, half)))
+    return "\n\n".join(out)
+
+
+def msg_more(long_v, short_v, picks):
+    """否決、規則訊號和名詞說明，收在可展開的區塊裡。"""
+    lines = []
+    vetoed = pd.concat([long_v, short_v]) if len(long_v) or len(short_v) else pd.DataFrame()
+    if len(vetoed):
+        groups, last = {}, ""
+        for name, reason in zip(vetoed["name"], vetoed["reason"]):
+            reason = last if str(reason).startswith("同上") and last else str(reason)
+            groups.setdefault(reason, []).append(name)
+            last = reason
+        v = [f"・{e('、'.join(dict.fromkeys(n)))}：{e(short(r, 1))}" for r, n in groups.items()]
+        lines.append(f"❌ <b>沒選的 {vetoed['name'].nunique()} 檔</b>")
+        lines.append("<blockquote expandable>" + "\n".join(v) + "</blockquote>")
+    if len(picks):
+        sig = []
+        for strategy, g in picks.groupby("strategy", sort=False):
+            win = g["win60"].dropna()
+            tag = f"（勝率 {win.mean():.0%}）" if len(win) else ""
+            sig.append(f"・{e(strategy.split('_', 1)[-1])}{tag}：{e('、'.join(g['name'].astype(str)))}")
+        lines.append(f"📊 <b>規則訊號 {len(picks)} 檔次</b>")
+        lines.append("<blockquote expandable>" + "\n".join(sig) + "</blockquote>")
+    lines.append("📖 <b>怎麼看</b>")
+    lines.append("<blockquote expandable>"
+                 "目標＝同組歷史報酬中位數，樂觀＝前 25%，當參考，不要掛單賣（回測發現固定停利會砍掉大漲股）。\n"
+                 "停損＝八成賺錢的歷史訊號沒跌破的價位，盤勢亂時依波動放寬；短線停損＝近 20 日平均波動 × 3。\n"
+                 "買多少＝打到停損最多虧總資金 1%、單檔最多 20%，依自己的資金等比例換算。\n"
+                 "報酬風險比＝（樂觀停利 − 收盤）÷（收盤 − 停損），不到 1 部位再減半。"
+                 "</blockquote>")
+    lines.append(f'👉 <a href="{DASHBOARD_URL}">打開看板</a>・<i>歷史統計加新聞判斷，不保證未來</i>')
+    return "\n".join(lines)
+
+
+def build_messages():
+    path = RESULTS / "picks_today.csv"
+    picks = pd.read_csv(path, dtype={"stock_id": str}) if path.exists() else pd.DataFrame()
+    day = picks["date"].iat[0] if len(picks) else pd.Timestamp.today().date()
+    long_p, long_v, lv = load_long()
+    short_p, short_v, odds = load_short()
+    msgs = [msg_overview(day, long_p, lv, short_p, picks), msg_long(long_p, lv), msg_short(short_p, odds),
+            msg_more(long_v, short_v, picks)]
+    out = []
+    for m in msgs:
+        if m and len(m) > LIMIT:  # 太長就從段落切開
+            chunk = ""
+            for part in m.split("\n\n"):
+                if chunk and len(chunk) + len(part) + 2 > LIMIT:
+                    out.append(chunk)
+                    chunk = ""
+                chunk = f"{chunk}\n\n{part}" if chunk else part
+            m = chunk
+        if m:
+            out.append(m)
+    return out
+
+
 def main():
-    msg = build_message()
+    msgs = build_messages()
+    if "--preview" in sys.argv:
+        msgs[0] = "🧪 <i>排版預覽（內容是上週五的推薦）</i>\n\n" + msgs[0]
     if "--dry" in sys.argv:
-        print(msg)
+        print("\n\n========== 下一則 ==========\n\n".join(msgs))
         return
-    _api("sendMessage", chat_id=chat_id(), text=msg, parse_mode="HTML", disable_web_page_preview="true")
-    print("已推播到 Telegram")
+    cid = chat_id()
+    for m in msgs:
+        _api("sendMessage", chat_id=cid, text=m, parse_mode="HTML", disable_web_page_preview="true")
+    print(f"已推播到 Telegram（{len(msgs)} 則）")
 
 
 if __name__ == "__main__":
