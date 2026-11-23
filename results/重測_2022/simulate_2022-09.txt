@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 203, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/mnt/attach/project-files/stock-backtest/twscreener/simulate.py", line 157, in <module>
+    main()
+    ~~~~^^
+  File "/mnt/attach/project-files/stock-backtest/twscreener/simulate.py", line 146, in main
+    g = res.groupby("date").agg(n=("stock_id", "size"), 推薦20日=("20日報酬", "mean"), 推薦60日=("60日報酬", "mean"), 隨機60日=("隨機買股_60日", "first"), 推薦抱到最後=("抱到最後", "mean"),
+        ~~~~~~~~~~~^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/pandas/util/_decorators.py", line 336, in wrapper
+    return func(*args, **kwargs)
+  File "/usr/local/lib/python3.13/site-packages/pandas/core/frame.py", line 10835, in groupby
+    return DataFrameGroupBy(
+        obj=self,
+    ...<6 lines>...
+        dropna=dropna,
+    )
+  File "/usr/local/lib/python3.13/site-packages/pandas/core/groupby/groupby.py", line 1095, in __init__
+    grouper, exclusions, obj = get_grouper(
+                               ~~~~~~~~~~~^
+        obj,
+        ^^^^
+    ...<4 lines>...
+        dropna=self.dropna,
+        ^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/pandas/core/groupby/grouper.py", line 901, in get_grouper
+    raise KeyError(gpr)
+KeyError: 'date'

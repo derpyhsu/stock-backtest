@@ -73,3 +73,11 @@ print("滾動校正：", summary(wf_nav))
 for k in V:
     print(f"一直用 {k}：", summary(seg[k]))
 print("加權指數：", summary(taiex))
+
+# 分年（每年各自從 1 起算）
+out = pd.DataFrame({"滾動校正": wf_nav, "一直 v1": seg["v1"], "加權指數": taiex}).dropna()
+print("\n分年報酬／最大回撤：")
+for y, g in out.groupby(out.index.year):
+    print(y, "  ".join(f"{k} {summary(g[k])}" for k in out.columns))
+if len(sys.argv) > 2:
+    navs.assign(滾動校正=wf_nav, 加權指數=load_market_index()["taiex"].reindex(navs.index)).to_csv(sys.argv[2])
