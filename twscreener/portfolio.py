@@ -168,6 +168,48 @@ def stats(nav, taiex):
             "賺錢月份": f"{(m > 0).sum()}/{len(m)}", "最差月": f"{m.min():+.1%}" if len(m) else "-"}
 
 
+# 校正規則（2026-11-23 定，門檻來自 2024-12～2026-11 的同規則回測，2022 資料補完後更新一次）
+VERSION = "v1"
+DD_WATCH, DD_STOP = -0.25, -0.37      # 回測最差回撤 -37%
+STREAK_WATCH, STREAK_STOP = 16, 20     # 連虧筆數：回測重抽 95 / 99 百分位
+ROLL_N, ROLL_MIN = 30, -0.028          # 最近 30 筆平均報酬低於回測第 5 百分位
+
+
+def check():
+    """每晚檢查模擬帳戶是否超出回測預期。回傳 (等級, 訊息列表)；等級：正常／注意／暫停。
+    暫停＝不再排新的買進（已持有的照規則出場），並且要重測規則。"""
+    level, notes = "正常", []
+    nav_p, tr_p = PAPER / "nav.csv", PAPER / "trades.csv"
+    if nav_p.exists():
+        nv = pd.read_csv(nav_p)["淨值"]
+        dd = nv.iat[-1] / nv.cummax().iat[-1] - 1
+        if dd <= DD_STOP:
+            level = "暫停"
+            notes.append(f"回撤 {dd:.0%}，超過回測最差 {DD_STOP:.0%}")
+        elif dd <= DD_WATCH:
+            level = "注意"
+            notes.append(f"回撤 {dd:.0%}，接近回測最差 {DD_STOP:.0%}")
+    if tr_p.exists():
+        t = pd.read_csv(tr_p)
+        streak = 0
+        for x in t["報酬"][::-1]:
+            if x > 0:
+                break
+            streak += 1
+        if streak >= STREAK_STOP:
+            level = "暫停"
+            notes.append(f"連虧 {streak} 筆，超過回測 99% 的情況")
+        elif streak >= STREAK_WATCH:
+            level = "注意" if level == "正常" else level
+            notes.append(f"連虧 {streak} 筆，超過回測 95% 的情況")
+        if len(t) >= ROLL_N and t["報酬"].tail(ROLL_N).mean() < ROLL_MIN:
+            level = "注意" if level == "正常" else level
+            notes.append(f"最近 {ROLL_N} 筆平均 {t['報酬'].tail(ROLL_N).mean():+.1%}，低於回測的 5% 最差情況")
+    PAPER.mkdir(parents=True, exist_ok=True)
+    (PAPER / "check.txt").write_text(f"{VERSION}\t{level}\t{'；'.join(notes)}", encoding="utf-8")
+    return level, notes
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "daily"
     inputs = _inputs()
@@ -193,6 +235,11 @@ def main():
     days = raw.index[raw.index > pd.Timestamp(last)] if last else raw.index[-1:]
     run(days, acct, inputs)
     acct.save()
+    level, notes = check()
+    if level == "暫停":  # 超出回測預期：取消新買進，只保留賣出
+        acct.orders = acct.orders[acct.orders["side"] == "賣"]
+        acct.orders.to_csv(PAPER / "orders.csv", index=False, encoding="utf-8-sig")
+    print(f"校正檢查：{level}" + (f"（{'；'.join(notes)}）" if notes else ""))
     print(stats(pd.read_csv(PAPER / "nav.csv"), taiex))
     print(acct.orders.to_string(index=False) if len(acct.orders) else "明天沒有委託")
 

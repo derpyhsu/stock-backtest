@@ -258,6 +258,13 @@ def msg_paper():
     except Exception:
         pass
     lines.append("<blockquote>" + "\n".join(body) + "</blockquote>")
+    ck = d / "check.txt"
+    if ck.exists():
+        ver, level, why = (ck.read_text(encoding="utf-8").split("\t") + ["", "", ""])[:3]
+        if level == "暫停":
+            lines.append(f"⛔ <b>規則 {e(ver)} 暫停新買進</b>：{e(why)}。我會重測規則後再恢復。")
+        elif level == "注意":
+            lines.append(f"🟡 {e(why)}，還在回測預期內，照規則繼續。")
     o = d / "orders.csv"
     orders = pd.read_csv(o, dtype={"stock_id": str}) if o.exists() and o.stat().st_size > 0 else pd.DataFrame()
     if len(orders):
