@@ -2,6 +2,7 @@
 
     python -m twscreener.notify          # 送出 results/picks_today.csv 的摘要
     python -m twscreener.notify --dry    # 只印出訊息，不送
+    python -m twscreener.notify --file results/morning/2026-11-25.txt   # 推一則寫好的訊息（早上美股提醒）
 
 需要環境變數 TELEGRAM_BOT_TOKEN（雲端環境設定裡填，不可以寫進檔案或 commit）。
 收件人 TELEGRAM_CHAT_ID 可以用環境變數給；沒給的話，第一次會從機器人收到的訊息找出來，
@@ -318,7 +319,11 @@ def build_messages():
 
 
 def main():
-    msgs = build_messages()
+    if "--file" in sys.argv:  # 早上美股消息提醒：推一個寫好的 HTML 文字檔（results/morning/日期.txt）
+        path = sys.argv[sys.argv.index("--file") + 1]
+        msgs = [open(path, encoding="utf-8").read().strip()[:4000]]
+    else:
+        msgs = build_messages()
     if "--preview" in sys.argv:
         msgs[0] = "🧪 <i>排版預覽（內容是上週五的推薦）</i>\n\n" + msgs[0]
     if "--dry" in sys.argv:
