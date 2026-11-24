@@ -6,7 +6,7 @@
 規則（全部寫死，中途不改；換版規則見 專案總覽.md「什麼時候校正規則」）：
 - 選股 v2（2026-11-24 起）：月營收加速（twscreener/pead.py，每月 11 號後第一個交易日出訊號），固定停損 -15%。
   v1（2026-11-23）：simulate.pick 的無偷看版本（同策略同大盤狀態保守期望值 > 0，依分數取前 5、每產業一檔）。
-- 進場：訊號日隔天開盤買；開盤已經低於停損就不買。
+- 進場：訊號日隔天開盤買；開盤已經低於停損、或開盤漲停（買不到）就不買。開盤跌停的賣單留到隔天。
 - 部位：打到停損最多虧淨值 1%，單檔最多淨值 20%，最多同時 10 檔，現金不夠就少買。
 - 出場：收盤跌破停損 → 隔天開盤賣；持有滿 60 個交易日 → 隔天開盤賣。不設固定停利（回測顯示會砍掉大漲股）。
 - 成本：買手續費 0.1425%，賣手續費 0.1425% + 證交稅 0.3%。
@@ -32,6 +32,7 @@ MAX_POS = 0.20
 MAX_HOLD = 10
 HOLD_DAYS = 60
 FEE, TAX = 0.001425, 0.003
+LIMIT = 0.095   # 開盤離昨收 ±9.5% 以上視為漲跌停鎖住，成交不了
 
 
 class Account:
@@ -45,12 +46,19 @@ class Account:
         px = self.pos["stock_id"].map(close).fillna(self.pos["entry"])
         return self.cash + float((px * self.pos["shares"]).sum())
 
-    def execute(self, day, opn):
+    def execute(self, day, opn, prev=None):
         """前一晚排的委託在今天開盤成交。"""
+        keep = []
         for _, o in self.orders.iterrows():
             p = opn.get(o["stock_id"], np.nan)
             if not np.isfinite(p):
                 continue
+            pc = prev.get(o["stock_id"], np.nan) if prev is not None else np.nan
+            if o["side"] == "賣" and np.isfinite(pc) and p <= pc * (1 - LIMIT):
+                keep.append(o)  # 開盤跌停：實際賣不掉，留到隔天再賣
+                continue
+            if o["side"] == "買" and np.isfinite(pc) and p >= pc * (1 + LIMIT):
+                continue  # 開盤漲停：實際買不到，不進場
             if o["side"] == "賣":
                 h = self.pos[self.pos["stock_id"] == o["stock_id"]]
                 if h.empty:
@@ -70,7 +78,7 @@ class Account:
                 self.cash -= shares * p * (1 + FEE)
                 self.pos.loc[len(self.pos) + 1000] = [o["stock_id"], o["name"], o["strategy"], day.date(), p, shares, o["stop"], 0]
         self.pos = self.pos.reset_index(drop=True)
-        self.orders = self.orders.iloc[0:0]
+        self.orders = pd.DataFrame(keep, columns=self.orders.columns) if keep else self.orders.iloc[0:0]
 
     def plan(self, day, close, cands):
         """收盤後：檢查出場、排明天的買進。"""
@@ -163,7 +171,8 @@ def run(days, acct, inputs, version=None):
     if v2:
         taiex, names = load_market_index()["taiex"], _names(sig)
     for d in days:
-        acct.execute(d, raw_open.loc[d])
+        i = raw.index.get_loc(d)
+        acct.execute(d, raw_open.loc[d], raw.iloc[i - 1] if i > 0 else None)
         if v2:
             c, _ = pead.pick(d, sig, ctx, raw, adj, vol, ind, taiex, names)
         else:
