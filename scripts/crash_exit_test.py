@@ -15,21 +15,24 @@ liquid = (vol.rolling(20).mean() >= 500) & (raw >= 10)
 mkt = (adj.pct_change(fill_method=None).where(liquid.shift(1)).mean(axis=1).fillna(0) + 1).cumprod()
 ma20 = adj.rolling(20).mean()
 e = pd.read_csv(ROOT / "results/腰斬續抱/events.csv", parse_dates=["date"], dtype={"stock_id": str})
-e = e[e["date"] <= adj.index[-61]]
+e = e[e["date"] <= adj.index[-121]]
 days = adj.index
 RULES = {"馬上賣": ("now",), "抱滿60天": ("hold",), "站回月線賣": ("ma",),
          "反彈10%賣(再跌15%停損)": ("up", .10, -.15), "反彈20%賣(再跌15%停損)": ("up", .20, -.15),
-         "反彈10%賣(不停損)": ("up", .10, -9), "反彈20%賣(不停損)": ("up", .20, -9)}
+         "反彈10%賣(不停損)": ("up", .10, -9), "反彈20%賣(不停損)": ("up", .20, -9),
+         "站回月線賣＋再跌10%停損": ("ma", -.10), "站回月線賣＋再跌15%停損": ("ma", -.15),
+         "站回月線賣＋再跌20%停損": ("ma", -.20), "站回月線賣＋再跌30%停損": ("ma", -.30),
+         "站回月線賣＋期限120天": ("ma", -9, 120)}
 def exit_ret(i, s, rule):
     p = adj[s].values; m = ma20[s].values; p0 = p[i]
-    end = min(i + 60, len(p) - 1)
+    end = min(i + (rule[2] if rule[0] == "ma" and len(rule) > 2 else 60), len(p) - 1)
     if rule[0] == "now":
         return 0.0, i
     for j in range(i + 1, end + 1):
         if not np.isfinite(p[j]):
             continue
         r = p[j] / p0 - 1
-        if rule[0] == "ma" and p[j] > m[j]:
+        if rule[0] == "ma" and (p[j] > m[j] or (len(rule) > 1 and r <= rule[1])):
             return r, j
         if rule[0] == "up" and (r >= rule[1] or r <= rule[2]):
             return r, j
@@ -53,3 +56,7 @@ def show(df, title):
 pd.set_option("display.width", 250)
 show(d, "全部腰斬事件")
 show(d[d["營收"] == "年增>=20%"], "營收年增>=20%")
+print("\n== 最差情況（全部事件）：最差 5% 平均、最差一筆")
+for k, g in d.groupby("規則"):
+    q = g["r"].quantile(0.05)
+    print(f"{k:22s} 最差5%平均 {g[g['r'] <= q]['r'].mean():+.1%}  最差 {g['r'].min():+.1%}")
