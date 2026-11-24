@@ -9,6 +9,7 @@
 - `skill/daily-update/SKILL.md`：每日更新（抓資料、回測、看板、同步 GitHub）。
 - `skill/strategy-backtest/SKILL.md`：新增或修改策略、加基本面條件、驗證是否真的有用。
 - `skill/agent-review/SKILL.md`：每晚從候選股查新聞、選出 3~5 檔推薦並存檔。
+- `skill/stock-check/SKILL.md`：使用者問個股（好不好、要不要賣、買在某價位怎麼辦）時，用固定規則回測回答，不給心得。
 - `skill/commit/SKILL.md`：commit 規範。每次 commit 前讀。
 
 ## Boundaries
