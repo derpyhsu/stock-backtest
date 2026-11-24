@@ -5,6 +5,7 @@
     python scripts/stock_check.py 2449 315        # 加上持有成本
 
 分組（只用當天已知的資料）：
+  期間：60 日（短中期）與 250 日（長期持有）各自判定。
   回撤：還原收盤 / 120 日最高 - 1 →  >-10%、-10~-25%、-25~-45%、<=-45%
   趨勢：收盤在 20 日均線上／下
   營收：最新已公布月營收年增 → 衰退、0~20%、>=20%
@@ -26,7 +27,7 @@ from twscreener.simulate import prices  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 COST = 0.006
-H = [20, 60, 120]
+H = [20, 60, 120, 250]
 sid = sys.argv[1]
 cost = float(sys.argv[2]) if len(sys.argv) > 2 else None
 
@@ -76,7 +77,7 @@ if cost:
 idx = adj.index[::5]
 rows = []
 for d in idx:
-    ok = liquid.loc[d] & dd.loc[d].notna() & fwd[60].loc[d].notna()
+    ok = liquid.loc[d] & dd.loc[d].notna() & fwd[60].loc[d].notna()  # 250 日結果可缺
     s = ok[ok].index
     if len(s) == 0:
         continue
@@ -93,11 +94,12 @@ hist["年"] = hist["date"].dt.year
 print(f"\n歷史樣本：{hist['date'].min().date()} ~ {hist['date'].max().date()}，每 5 個交易日取樣，報酬已扣成本 0.6%")
 
 
-def judge(g):
+def judge(g, h=60):
+    g = g.dropna(subset=[f"x{h}"])
     if len(g) < 30:
         return "樣本不足"
-    mm = g.groupby("月")["x60"].mean()
-    yy = g.groupby("年")["x60"].mean()
+    mm = g.groupby("月")[f"x{h}"].mean()
+    yy = g.groupby("年")[f"x{h}"].mean()
     if len(g) >= 100 and mm.mean() > 0 and (yy > 0).mean() >= 0.6:
         return "有優勢"
     if mm.mean() < 0 and (yy < 0).mean() >= 0.6:
@@ -124,6 +126,27 @@ for lv in levels:
     verdicts.append(v)
     print(f"| {'＋'.join(cur[k] for k in lv)} | {len(g)} | {g['r60'].mean():+.1%} | {(g['r60'] > 0).mean():.0%} | "
           f"{g['x60'].mean():+.1%} | {mm.mean():+.1%} | {(mm > 0).mean():.0%} | {yy} | {v} |")
+
+print("\n## 長期持有（250 個交易日，約一年；樣本只到一年前）")
+print("| 相似條件 | 件數 | 一年平均 | 勝率 | 一年超額 | 每月一票超額 | 贏的月份 | 逐年超額 | 判定 |")
+print("|---|---|---|---|---|---|---|---|---|")
+lverdicts = []
+for lv in levels:
+    mask = np.ones(len(hist), bool)
+    for k in lv:
+        mask &= hist[k].values == cur[k]
+    g = hist[mask].dropna(subset=["x250"])
+    v = judge(g, 250)
+    lverdicts.append(v)
+    if len(g) == 0:
+        print(f"| {'＋'.join(cur[k] for k in lv)} | 0 | | | | | | | 樣本不足 |")
+        continue
+    mm = g.groupby("月")["x250"].mean()
+    yy = " ".join(f"{y % 100:02d}:{v:+.0%}" for y, v in g.groupby("年")["x250"].mean().items())
+    print(f"| {'＋'.join(cur[k] for k in lv)} | {len(g)} | {g['r250'].mean():+.1%} | {(g['r250'] > 0).mean():.0%} | "
+          f"{g['x250'].mean():+.1%} | {mm.mean():+.1%} | {(mm > 0).mean():.0%} | {yy} | {v} |")
+lu = [v for v in lverdicts if v != "樣本不足"]
+print(f"長期判定：{lu[-1] if lu else '樣本不足'}（{'可長期持有' if lu and lu[-1] == '有優勢' else '沒有長期持有的優勢'}）")
 
 # 系統狀態
 notes = []
