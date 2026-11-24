@@ -259,6 +259,7 @@ def msg_paper():
     except Exception:
         pass
     lines.append("<blockquote>" + "\n".join(body) + "</blockquote>")
+    lines += paper_holdings(d, last["date"])
     ck = d / "check.txt"
     if ck.exists():
         ver, level, why = (ck.read_text(encoding="utf-8").split("\t") + ["", "", ""])[:3]
@@ -278,6 +279,32 @@ def msg_paper():
     else:
         lines.append("明天沒有買賣。")
     return "\n".join(lines)
+
+
+def paper_holdings(d, day):
+    """模擬帳戶持股明細（最多 10 檔，長度固定）和今天出場的交易。"""
+    out = []
+    pos_p = d / "positions.csv"
+    pos = pd.read_csv(pos_p, dtype={"stock_id": str}) if pos_p.exists() and pos_p.stat().st_size > 0 else pd.DataFrame()
+    if len(pos):
+        files = sorted((RESULTS.parent / "data" / "daily").glob("*.csv"))
+        close = pd.read_csv(files[-1], dtype={"stock_id": str}).set_index("stock_id")["close"] if files else pd.Series(dtype=float)
+        rows = []
+        for r in pos.itertuples():
+            c = close.get(r.stock_id, float("nan"))
+            ret = c / r.entry - 1 if c == c else float("nan")
+            gap = c / r.stop - 1 if c == c else float("nan")
+            flag = "⚠️" if gap == gap and gap < 0.05 else ("🟢" if ret == ret and ret > 0 else "🔻")
+            rows.append(f"{flag} <b>{e(r.name)}</b> {price(r.entry)}→{price(c)} <b>{ret:+.1%}</b>・停損 {price(r.stop)}・第 {int(r.days)}/60 天")
+        out.append("📍 <b>持股</b>（⚠️＝離停損不到 5%）")
+        out.append("<blockquote>" + "\n".join(rows) + "</blockquote>")
+    tr_p = d / "trades.csv"
+    if tr_p.exists():
+        t = pd.read_csv(tr_p, dtype={"stock_id": str})
+        t = t[t["賣出日"].astype(str) == str(day)]
+        for r in t.itertuples():
+            out.append(f"✔️ 今天賣出 <b>{e(r.name)}</b> {r.報酬:+.1%}（{e(r.原因)}）")
+    return out
 
 
 def msg_more(long_v, short_v, picks):
