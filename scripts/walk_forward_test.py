@@ -31,7 +31,7 @@ def variant(stop=None, skip_bear=False):
             c = c.assign(stop=stop)
         return c, reg
     P.pick = pk
-    nav = pd.DataFrame(P.run(days, P.Account(), inputs).nav)
+    nav = pd.DataFrame(P.run(days, P.Account(), inputs, version="v1").nav)
     return nav.set_index(pd.to_datetime(nav["date"]))["淨值"]
 
 

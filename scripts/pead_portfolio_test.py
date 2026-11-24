@@ -65,7 +65,7 @@ def make_pick(stop, skip_bear=False, mix=False):
 
 def run(pk):
     P.pick = pk
-    a = P.run(days[days >= start], P.Account(), inputs)
+    a = P.run(days[days >= start], P.Account(), inputs, version="v1")
     n = pd.DataFrame(a.nav)
     return n.set_index(pd.to_datetime(n["date"]))["淨值"]
 
