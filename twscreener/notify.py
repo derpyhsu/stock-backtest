@@ -5,8 +5,8 @@
     python -m twscreener.notify --file results/morning/2026-11-25.txt   # 推一則寫好的訊息（早上美股提醒）
 
 需要環境變數 TELEGRAM_BOT_TOKEN（雲端環境設定裡填，不可以寫進檔案或 commit）。
-收件人 TELEGRAM_CHAT_ID 可以用環境變數給；沒給的話，第一次會從機器人收到的訊息找出來，
-存在 .env（不上傳 GitHub）。
+收件人存在 .env 的 TELEGRAM_CHAT_ID（逗號分隔，不上傳 GitHub）。任何人私訊機器人就會在下次推播前
+自動加入，傳 /stop 退出；也可以用環境變數 TELEGRAM_CHAT_ID 固定加人。
 """
 import html
 import json
@@ -48,18 +48,51 @@ def _env_value(key):
     return None
 
 
-def chat_id():
-    cid = os.environ.get("TELEGRAM_CHAT_ID") or _env_value("TELEGRAM_CHAT_ID")
-    if cid:
-        return cid
-    chats = [u["message"]["chat"]["id"] for u in _api("getUpdates").get("result", [])
-             if "message" in u and u["message"]["chat"].get("type") == "private"]
-    if not chats:
+WELCOME = ("✅ 已加入每日推播：每晚約 22:00 送當天選股，早上 08:15 送美股提醒。\n"
+           "不想收了傳 /stop。內容是歷史回測統計，不保證未來。")
+BYE = "已停止推播。想再收的話隨時傳一句話給我。"
+
+
+def _save_ids(ids):
+    """收件人存在 .env 的 TELEGRAM_CHAT_ID（不上傳 GitHub）。"""
+    lines = ENV.read_text(encoding="utf-8").splitlines() if ENV.exists() else []
+    lines = [l for l in lines if not l.startswith("TELEGRAM_CHAT_ID=")]
+    lines.append("TELEGRAM_CHAT_ID=" + ",".join(ids))
+    ENV.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def chat_ids():
+    """收件人名單。每次推播前看機器人最近 24 小時收到的私訊：
+    傳過任何訊息的人自動加入（並回一則歡迎），傳 /stop 的人移除。
+    早晚各推一次、間隔不到 24 小時，所以不會漏掉。"""
+    fixed = [c.strip() for c in (os.environ.get("TELEGRAM_CHAT_ID") or "").split(",") if c.strip()]
+    saved = [c.strip() for c in (_env_value("TELEGRAM_CHAT_ID") or "").split(",") if c.strip()]
+    ids = list(dict.fromkeys(saved))
+    joined, left = [], []
+    for u in _api("getUpdates").get("result", []):
+        m = u.get("message") or {}
+        if m.get("chat", {}).get("type") != "private":
+            continue
+        cid, text = str(m["chat"]["id"]), (m.get("text") or "").strip().lower()
+        if text == "/stop":
+            if cid in ids:
+                ids.remove(cid)
+                left.append(cid)
+        elif cid not in ids:
+            ids.append(cid)
+            joined.append(cid)
+    if joined or left:
+        _save_ids(ids)
+    for cid in joined:
+        _api("sendMessage", chat_id=cid, text=WELCOME)
+    for cid in left:
+        _api("sendMessage", chat_id=cid, text=BYE)
+    if joined or left:
+        print(f"推播名單：新加入 {len(joined)} 人、退出 {len(left)} 人")
+    ids = list(dict.fromkeys(fixed + ids))
+    if not ids:
         raise SystemExit("機器人還沒收到訊息：請先在 Telegram 打開機器人按「開始」並傳一句話")
-    cid = str(chats[-1])
-    with ENV.open("a", encoding="utf-8") as f:
-        f.write(f"\nTELEGRAM_CHAT_ID={cid}\n")
-    return cid
+    return ids
 
 
 SEP = "━━━━━━━━━━━━"
@@ -171,26 +204,51 @@ def rr_text(target, close, stop):
     return f"{rr:.1f}", round(rr, 1) < 1
 
 
-def msg_overview(day, long_p, lv, short_p, picks):
+def load_v2_buys():
+    """v2（營收加速）明天要買的股票＝模擬帳戶的買進委託，推播和帳戶同一套規則。"""
+    o = RESULTS / "paper" / "orders.csv"
+    if not o.exists() or o.stat().st_size == 0:
+        return pd.DataFrame()
+    orders = pd.read_csv(o, dtype={"stock_id": str})
+    return orders[orders["side"] == "買"]
+
+
+def next_v2_day(day):
+    """下一個 v2 訊號日（約略）：月營收 10 號公布完，11 號後第一個交易日。"""
+    d = pd.Timestamp(day)
+    t = pd.Timestamp(d.year, d.month, 11)
+    if d >= t:
+        t = t + pd.offsets.MonthBegin(1) + pd.Timedelta(days=10)
+    while t.weekday() >= 5:
+        t += pd.Timedelta(days=1)
+    return t
+
+
+def msg_overview(day, v2, long_p, lv, short_p, picks):
     regime, dd = market_info()
     nxt = next_trading_day(day)
     lines = [f"📈 <b>台股日報｜{day_label(day)}收盤</b>"]
     if regime:
         lines.append(f"大盤 <b>{e(regime)}</b>" + (f"・距高點 {dd:+.0%}" if dd is not None else ""))
     lines.append(f"<i>適用 {day_label(nxt)}開盤；開盤就跌破停損的不要進場</i>")
-    if len(long_p):
-        lines += ["", "🏛 <b>中長線</b>・抱約 60 天"]
-        for i, r in enumerate(long_p.itertuples()):
-            x = lv.get(r.stock_id)
-            tail = f"停損 {price(x['停損價'])}・目標 {price(x['60日目標價'])}" if x is not None else ""
-            lines.append(f"{CIRCLE[i]} <b>{e(r.name)}</b> {price(r.close)}　{tail}")
+    lines += ["", "🏛 <b>中長線（營收加速 v2）</b>・和模擬帳戶同一套，抱 60 天"]
+    if len(v2):
+        for i, r in enumerate(v2.itertuples()):
+            lines.append(f"{CIRCLE[i]} <b>{e(r.name)}</b>　停損 {price(r.stop)}")
+    else:
+        lines.append(f"今天沒有新訊號（每月一次，下次約 {day_label(next_v2_day(day))}）。持股照規則抱，見下面模擬帳戶。")
     if len(short_p):
         lines += ["", "⚡ <b>短線</b>・抱 5～10 天"]
         for i, r in enumerate(short_p.itertuples()):
             lines.append(f"{CIRCLE[i]} <b>{e(r.name)}</b> {price(r.close)}　停損 {price(r.stop)}・停利 {price(r.tp10)}")
-    if not len(long_p) and not len(short_p):
-        lines += ["", "今天沒有推薦。" if not len(picks) else f"今天沒有 agent 推薦，規則訊號 {len(picks)} 檔次見下面。"]
-    lines += ["", "👇 每檔的理由、風險和要買多少在下面"]
+    if len(long_p):
+        lines += ["", "👀 <b>觀察名單</b>・其他規則加新聞挑選，帳戶回測不如 v2，不當主力"]
+        for r in long_p.itertuples():
+            x = lv.get(r.stock_id)
+            tail = f"　停損 {price(x['停損價'])}" if x is not None else ""
+            lines.append(f"・{e(r.name)} {price(r.close)}{tail}")
+    if len(v2) or len(short_p):
+        lines += ["", "👇 理由、風險和要買多少在下面"]
     return "\n".join(lines)
 
 
@@ -210,19 +268,19 @@ def qty_text(close, stop, half):
     return f"💰 每 100 萬買 {q}，約 {amt / 1e4:.0f} 萬{note}"
 
 
-def msg_long(long_p, lv):
-    if not len(long_p):
+def msg_v2(v2):
+    """v2 訊號日才有：每檔的理由和要買多少（停損 -15%、滿 60 天賣、不設停利）。"""
+    if not len(v2):
         return None
-    out = ["🏛 <b>中長線推薦</b>・抱約 60 天"]
-    for i, r in enumerate(long_p.itertuples()):
-        x = lv.get(r.stock_id)
-        if x is None:
-            out.append(f"{CIRCLE[i]} <b>{e(r.name)}</b> {r.stock_id}\n✅ {e(short(r.reason))}")
-            continue
-        rr, half = rr_text(x["60日停利價"], r.close, x["停損價"])
-        rows = [f"🎯 60 天目標 <b>{price(x['60日目標價'])}</b>・樂觀 {price(x['60日停利價'])}・報酬風險比 {rr}",
-                "📅 " + "・".join(f"{h}天 {price(x[f'{h}日目標價'])}" for h in (30, 90, 120))]
-        out.append(card(i, r, r.close, x["停損價"], rows, r.reason, r.risk, qty_text(r.close, x["停損價"], half)))
+    files = sorted((RESULTS.parent / "data" / "daily").glob("*.csv"))
+    close = pd.read_csv(files[-1], dtype={"stock_id": str}).set_index("stock_id")["close"] if files else pd.Series(dtype=float)
+    out = ["🏛 <b>營收加速 v2</b>・明天開盤買，跌破停損或滿 60 天賣，不設停利（回測發現停利會砍掉大漲股）"]
+    for i, r in enumerate(v2.itertuples()):
+        c = close.get(r.stock_id, float("nan"))
+        body = [f"收盤 {price(c)}　🛑 停損 <b>{price(r.stop)}</b>" + (f" {pct(r.stop, c)}" if c == c else ""),
+                qty_text(c, r.stop, False) if c == c else ""]
+        out.append(f"{CIRCLE[i]} <b>{e(r.name)}</b> {r.stock_id}\n<blockquote>" + "\n".join(x for x in body if x)
+                   + f"</blockquote>\n✅ {e(short(r.reason))}")
     return "\n\n".join(out)
 
 
@@ -312,7 +370,8 @@ def msg_more(long_v, short_v, picks):
     lines = []
     lines.append("📖 <b>怎麼看</b>")
     lines.append("<blockquote expandable>"
-                 "目標＝同組歷史報酬中位數，樂觀＝前 25%，當參考，不要掛單賣（回測發現固定停利會砍掉大漲股）。\n"
+                 "v2＝月營收年增 30% 以上且在加速、創 12 個月新高、股價已比大盤多漲 5%；停損 -15%，滿 60 天賣，不設停利。\n"
+                 "觀察名單的目標＝同組歷史報酬中位數，樂觀＝前 25%，當參考，不要掛單賣（回測發現固定停利會砍掉大漲股）。\n"
                  "停損＝八成賺錢的歷史訊號沒跌破的價位，盤勢亂時依波動放寬；短線停損＝近 20 日平均波動 × 3。\n"
                  "買多少＝打到停損最多虧總資金 1%、單檔最多 20%，依自己的資金等比例換算。\n"
                  "報酬風險比＝（樂觀停利 − 收盤）÷（收盤 − 停損），不到 1 部位再減半。"
@@ -327,7 +386,8 @@ def build_messages():
     day = picks["date"].iat[0] if len(picks) else pd.Timestamp.today().date()
     long_p, long_v, lv = load_long()
     short_p, short_v, odds = load_short()
-    msgs = [m for m in (msg_overview(day, long_p, lv, short_p, picks), msg_long(long_p, lv), msg_short(short_p, odds),
+    v2 = load_v2_buys()
+    msgs = [m for m in (msg_overview(day, v2, long_p, lv, short_p, picks), msg_v2(v2), msg_short(short_p, odds),
                         msg_paper()) if m]
     msgs[-1] += "\n\n" + msg_more(long_v, short_v, picks)  # 說明接在最後一則後面，不另發
     out = []
@@ -356,10 +416,11 @@ def main():
     if "--dry" in sys.argv:
         print("\n\n========== 下一則 ==========\n\n".join(msgs))
         return
-    cid = chat_id()
-    for m in msgs:
-        _api("sendMessage", chat_id=cid, text=m, parse_mode="HTML", disable_web_page_preview="true")
-    print(f"已推播到 Telegram（{len(msgs)} 則）")
+    cids = chat_ids()
+    for cid in cids:
+        for m in msgs:
+            _api("sendMessage", chat_id=cid, text=m, parse_mode="HTML", disable_web_page_preview="true")
+    print(f"已推播到 Telegram（{len(msgs)} 則 × {len(cids)} 人）")
 
 
 if __name__ == "__main__":
