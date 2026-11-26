@@ -1,1 +1,2 @@
-﻿date,side,stock_id,name,strategy,shares,stop,reason
+﻿date,side,stock_id,name,strategy,shares,stop,reason,exit_date
+2026-11-26,買,7856,漢測,處置股,10,1.58,公告處置（累計第 3 次）；不設停損，處置最後一天收盤賣,2026-12-03

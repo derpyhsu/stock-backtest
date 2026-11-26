@@ -1,2 +1,2 @@
-﻿stock_id,name,strategy,entry_date,entry,shares,stop,days
-5469,瀚宇博,逆勢籌碼,2026-11-24,73.8,924,58.09,2
+﻿stock_id,name,strategy,entry_date,entry,shares,stop,days,exit_date
+5469,瀚宇博,逆勢籌碼,2026-11-24,73.8,924,58.09,3,

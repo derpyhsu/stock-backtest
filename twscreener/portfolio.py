@@ -117,7 +117,7 @@ class Account:
         self.review = []
         for _, h in self.pos.iterrows():
             c = close.get(h["stock_id"], np.nan)
-            why, basis = None, ""
+            why, basis, gap = None, "", np.nan
             if h["stock_id"] in late:
                 why = "處置結束（跌停順延）"
             elif pd.notna(h["exit_date"]):
@@ -125,7 +125,6 @@ class Account:
             elif np.isfinite(c) and c <= h["stop"]:
                 why = "跌破停損"
             else:
-                gap = np.nan
                 if trend is not None:
                     a_, m_ = trend[0].get(h["stock_id"], np.nan), trend[1].get(h["stock_id"], np.nan)
                     gap = a_ / m_ - 1 if np.isfinite(a_) and np.isfinite(m_) and m_ > 0 else np.nan
@@ -145,7 +144,11 @@ class Account:
             ret = c / h["entry"] - 1 if np.isfinite(c) and h["entry"] else np.nan
             self.review.append({"date": day.date(), "stock_id": h["stock_id"], "name": h["name"], "strategy": h["strategy"],
                                 "買進日": h["entry_date"], "持有天數": h["days"], "目前報酬": round(ret, 4) if np.isfinite(ret) else np.nan,
-                                "決定": "明天開盤賣" if why else "續抱", "依據": why or basis})
+                                "決定": "明天開盤賣" if why else "續抱", "依據": why or basis,
+                                "停損價": h["stop"] if pd.isna(h["exit_date"]) else np.nan,
+                                "離停損": round(c / h["stop"] - 1, 4) if np.isfinite(c) and pd.isna(h["exit_date"]) and h["stop"] > 0 else np.nan,
+                                "離60日線": round(gap, 4) if np.isfinite(gap) else np.nan,
+                                "60日線價": round(c / (1 + gap), 2) if np.isfinite(gap) and np.isfinite(c) else np.nan})
         rows = [{"date": day.date(), "side": "賣", "stock_id": h["stock_id"], "name": h["name"], "strategy": h["strategy"],
                  "shares": h["shares"], "stop": h["stop"], "reason": why, "exit_date": np.nan} for h, why in sells]
         nav = self.value(close)
@@ -215,7 +218,8 @@ class Account:
             nv = pd.concat([pd.read_csv(n), nv]).drop_duplicates("date", keep="last")
         nv.to_csv(n, index=False, encoding="utf-8-sig")
         (PAPER / "cash.txt").write_text(f"{self.cash:.2f}")
-        pd.DataFrame(self.review, columns=["date", "stock_id", "name", "strategy", "買進日", "持有天數", "目前報酬", "決定", "依據"]).to_csv(
+        pd.DataFrame(self.review, columns=["date", "stock_id", "name", "strategy", "買進日", "持有天數", "目前報酬", "決定", "依據",
+                                           "停損價", "離停損", "離60日線", "60日線價"]).to_csv(
             PAPER / "hold_review.csv", index=False, encoding="utf-8-sig")
 
     @classmethod

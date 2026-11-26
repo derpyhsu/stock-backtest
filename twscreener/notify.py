@@ -388,6 +388,7 @@ def paper_holdings(d, day):
                 rows.append(f"{flag} <b>{e(r.name)}</b> {price(r.entry)}→{price(c)} <b>{ret:+.1%}</b>・停損 {price(r.stop)}・{tail}")
         out.append("📍 <b>持股</b>（⚠️＝離停損不到 5%）")
         out.append("<blockquote>" + "\n".join(rows) + "</blockquote>")
+    out += paper_watch(d)
     tr_p = d / "trades.csv"
     if tr_p.exists():
         t = pd.read_csv(tr_p, dtype={"stock_id": str})
@@ -395,6 +396,44 @@ def paper_holdings(d, day):
         for r in t.itertuples():
             out.append(f"✔️ 今天賣出 <b>{e(r.name)}</b> {r.報酬:+.1%}（{e(r.原因)}）")
     return out
+
+
+NEAR_STOP, NEAR_MA, NEAR_DAYS, BIG_GAIN = 0.05, 0.03, 5, 0.30
+
+
+def paper_watch(d):
+    """明天要留意的持股：離停損近、快滿 60／120 天、續抱中快碰 60 日線、已經大賺。只提醒，不改規則。
+    資料來自 portfolio.plan 每晚寫的 hold_review.csv。"""
+    p = d / "hold_review.csv"
+    if not p.exists() or p.stat().st_size == 0:
+        return []
+    rv = pd.read_csv(p, dtype={"stock_id": str})
+    if rv.empty or "離停損" not in rv.columns:
+        return []
+    rows = []
+    for r in rv[rv["決定"] == "續抱"].itertuples():
+        if r.strategy == "處置股":
+            continue
+        days, gs, gm, ret = int(r.持有天數), r.離停損, r.離60日線, r.目前報酬
+        ma = f"目前比 60 日線（約 {price(r._13)}）{'高' if gm >= 0 else '低'} {abs(gm):.1%}" if gm == gm else "沒有 60 日線資料"
+        notes = []
+        if gs == gs and gs < NEAR_STOP:
+            notes.append(f"離停損只剩 {gs:.1%}，明天收盤低於 {price(r.停損價)} 就會在後天開盤賣")
+        if 60 - NEAR_DAYS <= days < 60:
+            notes.append(f"再 {60 - days} 天滿 60 天，{ma}；到時在線上續抱、在線下賣")
+        elif days >= 60:
+            if days >= 120 - NEAR_DAYS:
+                notes.append(f"續抱第 {days} 天，再 {120 - days} 天滿 120 天就賣")
+            if gm == gm and gm < NEAR_MA:
+                notes.append(f"續抱中，{ma}，收盤跌破就賣")
+        if ret == ret and ret >= BIG_GAIN:
+            seen = any("60 日線" in x for x in notes)
+            notes.append(f"已賺 {ret:+.0%}，規則沒有停利價，出場看 60 日線" + ("" if seen else f"（{ma}）") + ("，未滿 60 天前只看停損" if days < 60 else ""))
+        if notes:
+            rows.append(f"・<b>{e(r.name)}</b>：" + "；".join(notes))
+    if not rows:
+        return []
+    return ["👀 <b>明天留意</b>（只是提醒，帳戶照規則走）", "<blockquote>" + "\n".join(rows) + "</blockquote>"]
 
 
 def msg_more(long_v, short_v, picks):
