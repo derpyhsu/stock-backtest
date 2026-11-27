@@ -18,7 +18,7 @@ description: 台股全市場每日更新：抓當天行情、除權息、月營�
 7. 照 `skill/agent-review/SKILL.md` 做 agent 複審，選出今日推薦。
 7a-0. `python3 scripts/fetch_disposition.py --update`：抓今年的處置股公告到 `data/disposition.csv`（證交所、櫃買各一次查詢；要等步驟 1 的證交所抓取結束才跑，不要同時打證交所）。模擬帳戶 v4 的處置股那一份靠它，**一定要在下一步之前跑完**；失敗就重試，還是失敗要在回報裡講明今天處置股沒更新。
 7a-1. `python3 scripts/fetch_tdcc.py`：抓集保股權分散表最新一週到 `data/tdcc/`（集保只給最新一週，要每週累積；同一週已存就自動略過）。失敗不影響其他步驟，回報裡提一句就好。
-7a. `python3 -m twscreener.portfolio daily`：模擬帳戶（v5：營收加速、一年新高、處置股各 1/3；處置股第 2 天開盤買，另加處置跌深）（完全照規則，不經人手）執行今天開盤的委託、檢查停損與到期、排明天的委託，存在 `results/paper/`。滿 60 天的持股收盤還在 60 日線上就續抱（最多 120 天）；每檔續抱或賣出的依據寫在 `results/paper/hold_review.csv`，回報時把「滿 60 天續抱」和「明天賣」的幾檔連同依據列出來。推播的模擬帳戶那則會自動加「明天留意」（離停損不到 5%、再 5 天內滿 60 或 120 天、續抱中離 60 日線不到 3%、已賺 30% 以上）。不要手動改裡面的檔案。
+7a. `python3 -m twscreener.portfolio daily`：模擬帳戶（v6：營收加速 30%、一年新高 30%、處置股 40%；處置股第 2 天開盤買，另加處置跌深）（完全照規則，不經人手）執行今天開盤的委託、檢查停損與到期、排明天的委託，存在 `results/paper/`。滿 60 天的持股收盤還在 60 日線上就續抱（最多 120 天）；每檔續抱或賣出的依據寫在 `results/paper/hold_review.csv`，回報時把「滿 60 天續抱」和「明天賣」的幾檔連同依據列出來。推播的模擬帳戶那則會自動加「明天留意」（離停損不到 5%、再 5 天內滿 60 或 120 天、續抱中離 60 日線不到 3%、已賺 30% 以上）。不要手動改裡面的檔案。
 7a. `python3 scripts/orb_test.py fetch`：累積成交最大 300 檔的 5 分 K 到 `data/intraday/`（Yahoo 只保留 60 天，每天抓才不會斷）。當沖策略目前都沒過回測，資料是為了日後重測；失敗就略過，不影響其他步驟。
 7c. 每月 15 號後第一次更新：`python3 scripts/fetch_revenue_dates.py --refresh`（背景跑，FinMind 免費帳號每小時 600 次），累積營收實際公布日到 `data/revenue_dates.csv`，給 2027-01 檢討「營收提早進場」用。
 7b. `python3 -m twscreener.notify`：把今天的選股推播到 Telegram。需要環境變數 `TELEGRAM_BOT_TOKEN`；沒有就略過。收件人 ID 存在 `.env`。先用 `--dry` 可以只看訊息不送。

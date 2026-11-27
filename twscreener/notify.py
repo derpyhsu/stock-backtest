@@ -226,6 +226,63 @@ def next_v2_day(day):
     return t
 
 
+_CHIPS = {}
+
+
+def chips_line(sid):
+    """籌碼面一行：外資、投信近 5 日買賣超和融資近 5 日增減（張），直接從 data/daily 最近 6 天算，不經人手。"""
+    if "d" not in _CHIPS:
+        files = sorted((RESULTS.parent / "data" / "daily").glob("*.csv"))[-6:]
+        _CHIPS["d"] = pd.concat([pd.read_csv(f, dtype={"stock_id": str}) for f in files]) if files else pd.DataFrame()
+    d = _CHIPS["d"]
+    x = d[d["stock_id"] == sid].sort_values("date") if len(d) else d
+    if len(x) < 2:
+        return ""
+    w = x.tail(5)
+    f5, t5, mg = w["foreign_net"].sum(), w["trust_net"].sum(), x["margin_bal"].iat[-1] - x["margin_bal"].iat[-len(w) - 1 if len(x) > len(w) else 0]
+    word = lambda v: f"買超 {v:,.0f} 張" if v > 0 else f"賣超 {-v:,.0f} 張" if v < 0 else "沒有進出"  # noqa: E731
+    parts = [f"外資 5 日{word(f5)}", f"投信 5 日{word(t5)}"]
+    if mg == mg:
+        parts.append(f"融資 5 日{'增' if mg >= 0 else '減'} {abs(mg):,.0f} 張")
+    return "📊 " + "、".join(parts)
+
+
+def news_map(day):
+    """消息面：每晚 agent 查的新聞（results/paper/news.csv：date, stock_id, name, kind, news, link）。只當佐證，不影響買賣。"""
+    f = RESULTS / "paper" / "news.csv"
+    if not f.exists() or f.stat().st_size == 0:
+        return {}
+    n = pd.read_csv(f, dtype={"stock_id": str})
+    n = n[n["date"].astype(str) == str(pd.Timestamp(day).date())]
+    return {r.stock_id: (str(r.news), str(getattr(r, "link", "") or "")) for r in n.itertuples()}
+
+
+def news_line(nm, sid):
+    if sid not in nm:
+        return ""
+    text, link = nm[sid]
+    tail = f' <a href="{html.escape(link, quote=True)}">來源</a>' if link.startswith("http") else ""
+    return f"📰 {e(text)}{tail}"
+
+
+HORIZON = (("⚡ 短期・約 5～10 天", lambda g: g == "處置股"), ("📆 中期・20 個交易日", lambda g: g == REBOUND),
+           ("🌲 長期・60～120 天", lambda g: g not in ("處置股", REBOUND)))
+
+
+def horizon_groups(v2):
+    """買進訊號依預計抱多久分三區：短期＝處置股、中期＝處置跌深、長期＝營收加速和一年新高。"""
+    rows = list(v2.itertuples())
+    return [(t, [r for r in rows if f(r.strategy)]) for t, f in HORIZON if any(f(r.strategy) for r in rows)]
+
+
+def paper_nav():
+    f = RESULTS / "paper" / "nav.csv"
+    try:
+        return float(pd.read_csv(f)["淨值"].iat[-1])
+    except Exception:
+        return float("nan")
+
+
 def msg_overview(day, v2, long_p, lv, short_p, picks):
     regime, dd = market_info()
     nxt = next_trading_day(day)
@@ -233,15 +290,19 @@ def msg_overview(day, v2, long_p, lv, short_p, picks):
     if regime:
         lines.append(f"大盤 <b>{e(regime)}</b>" + (f"・距高點 {dd:+.0%}" if dd is not None else ""))
     lines.append(f"<i>適用 {day_label(nxt)}開盤；開盤就跌破停損的不要進場</i>")
-    lines += ["", "🏛 <b>模擬帳戶 v5 明天買進</b>・營收加速、一年新高、處置股各 1/3 資金"]
+    lines += ["", "🎯 <b>明天開盤的訊號</b>・照固定規則選出"]
     if len(v2):
-        for i, r in enumerate(v2.itertuples()):
-            xd = getattr(r, "exit_date", None)
-            tail = (f"抱 {REBOUND_HOLD} 個交易日收盤賣" if r.strategy == REBOUND
-                    else f"{md(xd)} 收盤賣" if isinstance(xd, str) and xd else f"停損 {price(r.stop)}")
-            lines.append(f"{CIRCLE[i % len(CIRCLE)]} <b>{e(r.name)}</b>　{e(r.strategy)}・{tail}")
+        n = 0
+        for title, rows in horizon_groups(v2):
+            lines.append(f"<b>{title}</b>")
+            for r in rows:
+                xd = getattr(r, "exit_date", None)
+                tail = (f"抱 {REBOUND_HOLD} 個交易日收盤賣" if r.strategy == REBOUND
+                        else f"{md(xd)} 收盤賣" if isinstance(xd, str) and xd else f"停損 {price(r.stop)}")
+                lines.append(f"{CIRCLE[n % len(CIRCLE)]} <b>{e(r.name)}</b>　{e(r.strategy)}・{tail}")
+                n += 1
     else:
-        lines.append(f"明天沒有新買進（今天沒有處置第一天、處置跌深和一年新高訊號，或那一份資金已滿；營收加速下次約 {day_label(next_v2_day(day))}）。持股照規則抱，見下面模擬帳戶。")
+        lines.append(f"明天沒有新訊號（今天沒有處置第 2 天、處置跌深和一年新高訊號，或那一類的位子已滿；營收加速下次約 {day_label(next_v2_day(day))}）。")
     ann = announced_today(day)
     if ann:
         lines.append(f"📌 今天公告處置（處置第 2 天開盤才買，明晚排單）：{e('、'.join(ann[:8]))}" + (f" 等 {len(ann)} 檔" if len(ann) > 8 else ""))
@@ -282,17 +343,26 @@ def msg_v2(v2):
         return None
     files = sorted((RESULTS.parent / "data" / "daily").glob("*.csv"))
     close = pd.read_csv(files[-1], dtype={"stock_id": str}).set_index("stock_id")["close"] if files else pd.Series(dtype=float)
-    out = [f"🏛 <b>模擬帳戶 v5 明天買進</b>・開盤買。營收加速、一年新高：跌破停損或滿 60 天賣，不設停利。處置股（處置第 2 天買）：不設停損，處置最後一天收盤賣。處置跌深：不設停損，抱 {REBOUND_HOLD} 個交易日收盤賣"]
-    for i, r in enumerate(v2.itertuples()):
-        c = close.get(r.stock_id, float("nan"))
-        xd = getattr(r, "exit_date", None)
-        head = (f"收盤 {price(c)}　⏱ 抱 {REBOUND_HOLD} 個交易日收盤賣・不設停損" if r.strategy == REBOUND
-                else f"收盤 {price(c)}　⏱ {md(xd)} 收盤賣・不設停損" if isinstance(xd, str) and xd
-                else f"收盤 {price(c)}　🛑 停損 <b>{price(r.stop)}</b>" + (f" {pct(r.stop, c)}" if c == c else ""))
-        body = [head,
-                f"💰 模擬帳戶（100 萬起）買 {int(r.shares):,} 股，約 {r.shares * c / 1e4:.0f} 萬" if c == c else ""]
-        out.append(f"{CIRCLE[i % len(CIRCLE)]} <b>{e(r.name)}</b> {r.stock_id}　<i>{e(r.strategy)}</i>\n<blockquote>" + "\n".join(x for x in body if x)
-                   + f"</blockquote>\n✅ {e(short(r.reason))}")
+    nav = paper_nav()
+    nm = news_map(v2["date"].iat[0])
+    out = ["🎯 <b>明天開盤的訊號・細節</b>\n<i>都是開盤買；開盤漲停或開盤就低於停損的不買</i>"]
+    n = 0
+    for title, rows in horizon_groups(v2):
+        rule = ("不設停損，處置最後一天收盤賣" if "短期" in title else f"不設停損，抱 {REBOUND_HOLD} 個交易日收盤賣" if "中期" in title
+                else "收盤跌破停損隔天賣，不設停利；滿 60 天還在 60 日線上續抱，最多 120 天")
+        out.append(f"<b>{title}</b>\n<i>{rule}</i>")
+        for r in rows:
+            c = close.get(r.stock_id, float("nan"))
+            xd = getattr(r, "exit_date", None)
+            head = (f"收盤 {price(c)}　⏱ 抱 {REBOUND_HOLD} 個交易日收盤賣" if r.strategy == REBOUND
+                    else f"收盤 {price(c)}　⏱ {md(xd)} 收盤賣" if isinstance(xd, str) and xd
+                    else f"收盤 {price(c)}　🛑 停損 <b>{price(r.stop)}</b>" + (f" {pct(r.stop, c)}" if c == c else ""))
+            w = r.shares * c / nav if c == c and nav == nav and nav > 0 else float("nan")
+            body = [head, f"💰 資金的 {w:.1%}（每 100 萬約 {w * 100:.1f} 萬）" if w == w else ""]
+            ev = [f"✅ {e(short(r.reason))}", chips_line(r.stock_id), news_line(nm, r.stock_id)]
+            out.append(f"{CIRCLE[n % len(CIRCLE)]} <b>{e(r.name)}</b> {r.stock_id}　<i>{e(r.strategy)}</i>\n<blockquote>" + "\n".join(x for x in body if x)
+                       + "</blockquote>\n" + "\n".join(x for x in ev if x))
+            n += 1
     return "\n\n".join(out)
 
 
@@ -319,7 +389,7 @@ def msg_paper():
     if nav.empty:
         return None
     first, last = nav.iloc[0], nav.iloc[-1]
-    lines = ["🤖 <b>模擬帳戶</b>・完全照規則，不經人手"]
+    lines = ["🤖 <b>模擬帳戶 v6</b>・100 萬起，完全照上面的訊號買賣，不經人手"]
     body = [f"淨值 <b>{last['淨值'] / 1e4:,.1f} 萬</b>（起始 {first['淨值'] / 1e4:,.0f} 萬，{last['淨值'] / first['淨值'] - 1:+.1%}）",
             f"持股 {int(last['持股數'])} 檔・現金 {last['現金'] / 1e4:,.1f} 萬"]
     try:
@@ -339,8 +409,10 @@ def msg_paper():
             lines.append(f"🟡 {e(why)}，還在回測預期內，照規則繼續。")
     o = d / "orders.csv"
     orders = pd.read_csv(o, dtype={"stock_id": str}) if o.exists() and o.stat().st_size > 0 else pd.DataFrame()
+    files = sorted((RESULTS.parent / "data" / "daily").glob("*.csv"))
+    pclose = pd.read_csv(files[-1], dtype={"stock_id": str}).set_index("stock_id")["close"] if files else pd.Series(dtype=float)
     if len(orders):
-        lines.append("明天開盤：")
+        lines.append("🛒 <b>明天出手</b>")
         for r in orders.itertuples():
             if r.side == "賣":
                 lines.append(f"・🔴 賣 <b>{e(r.name)}</b> {int(r.shares):,} 股（{e(r.reason)}）")
@@ -350,6 +422,10 @@ def msg_paper():
                 lines.append(f"・🟢 買 <b>{e(r.name)}</b> {int(r.shares):,} 股（處置股，不設停損，{md(r.exit_date)} 收盤賣；開盤漲停就不買）")
             else:
                 lines.append(f"・🟢 買 <b>{e(r.name)}</b> {int(r.shares):,} 股，停損 {price(r.stop)}（開盤低於停損就不買）")
+            if r.side == "買":
+                c = pclose.get(r.stock_id, float("nan"))
+                if c == c:
+                    lines.append(f"　　開盤市價買，不挑價；今天收盤 {price(c)}，約 {r.shares * c / 1e4:.1f} 萬；開在漲停 {price(c * 1.1)} 附近就放棄")
     pos_p = d / "positions.csv"
     pos = pd.read_csv(pos_p, dtype={"stock_id": str}) if pos_p.exists() and pos_p.stat().st_size > 0 else pd.DataFrame()
     due = []
@@ -362,7 +438,7 @@ def msg_paper():
         for r in due:
             lines.append(f"・🔴 賣 <b>{e(r.name)}</b> {int(r.shares):,} 股")
     if not len(orders) and not due:
-        lines.append("明天沒有買賣。")
+        lines.append("🛒 <b>明天不出手</b>，沒有買賣。")
     return "\n".join(lines)
 
 
@@ -412,6 +488,10 @@ def paper_holdings(d, day):
                 rows.append(f"{flag} <b>{e(r.name)}</b> {price(r.entry)}→{price(c)} <b>{ret:+.1%}</b>・停損 {price(r.stop)}・{tail}")
         out.append("📍 <b>持股</b>（⚠️＝離停損不到 5%）")
         out.append("<blockquote>" + "\n".join(rows) + "</blockquote>")
+        nm = news_map(day)
+        hn = [f"・<b>{e(r.name)}</b>：{news_line(nm, r.stock_id)[2:]}" for r in pos.itertuples() if r.stock_id in nm]
+        if hn:
+            out += ["📰 <b>持股消息</b>"] + hn
     out += paper_watch(d)
     tr_p = d / "trades.csv"
     if tr_p.exists():
@@ -465,12 +545,12 @@ def msg_more(long_v, short_v, picks):
     lines = []
     lines.append("📖 <b>怎麼看</b>")
     lines.append("<blockquote expandable>"
-                 "v5＝資金分三份。營收加速（月營收年增 30% 以上且在加速、創 12 個月新高、股價已比大盤多漲 5%，每月一次）和一年新高（收盤創一年新高，天天選）：各最多 10 檔，停損 -15%，不設停利；滿 60 天時收盤還在 60 日線上就續抱，跌破 60 日線或滿 120 天才賣。"
-                 "處置股（被公告處置的股票，處置第 2 天開盤買、最後一天收盤賣，約 5～10 天；處置第一天平均是跌的，所以等一天）：每筆只放總資金約 1.7%，不設停損，最多 20 檔；處置股是分盤撮合，下單可能要預收款券。"
-                 "處置跌深（處置期間跌 15% 以上的，解除當天開盤買，抱 20 個交易日收盤賣）：每筆一樣約 1.7%、不設停損，和處置股共用 20 個位子。\n"
+                 "v6＝資金分三份：營收加速 30%、一年新高 30%、處置股 40%。營收加速（月營收年增 30% 以上且在加速、創 12 個月新高、股價已比大盤多漲 5%，每月一次）和一年新高（收盤創一年新高，天天選）：各最多 10 檔，停損 -15%，不設停利；滿 60 天時收盤還在 60 日線上就續抱，跌破 60 日線或滿 120 天才賣。"
+                 "處置股（被公告處置的股票，處置第 2 天開盤買、最後一天收盤賣，約 5～10 天；處置第一天平均是跌的，所以等一天）：每筆只放總資金約 2%，不設停損，最多 20 檔；處置股是分盤撮合，下單可能要預收款券。"
+                 "處置跌深（處置期間跌 15% 以上的，解除當天開盤買，抱 20 個交易日收盤賣）：每筆一樣約 2%、不設停損，和處置股共用 20 個位子。\n"
                  "觀察名單的目標＝同組歷史報酬中位數，樂觀＝前 25%，當參考，不要掛單賣（回測發現固定停利會砍掉大漲股）。\n"
                  "停損＝八成賺錢的歷史訊號沒跌破的價位，盤勢亂時依波動放寬；短線停損＝近 20 日平均波動 × 3。\n"
-                 "買多少＝營收加速、一年新高每檔打到停損最多虧總資金約 0.33%、單檔最多約 6.7%（資金分三份各算）；處置股每筆約 1.7%；短線每檔最多虧 1%、單檔 20%。依自己的資金等比例換算。\n"
+                 "買多少＝營收加速、一年新高每檔打到停損最多虧總資金約 0.33%、單檔最多約 6.7%（資金分三份各算）；處置股每筆約 2%；短線每檔最多虧 1%、單檔 20%。依自己的資金等比例換算。\n"
                  "報酬風險比＝（樂觀停利 − 收盤）÷（收盤 − 停損），不到 1 部位再減半。"
                  "</blockquote>")
     lines.append(f'👉 <a href="{DASHBOARD_URL}">打開看板</a>・<i>歷史統計加新聞判斷，不保證未來</i>')
@@ -484,9 +564,11 @@ def build_messages():
     long_p, long_v, lv = load_long()
     short_p, short_v, odds = load_short()
     v2 = load_v2_buys()
-    msgs = [m for m in (msg_overview(day, v2, long_p, lv, short_p, picks), msg_v2(v2), msg_short(short_p, odds),
-                        msg_paper()) if m]
-    msgs[-1] += "\n\n" + msg_more(long_v, short_v, picks)  # 說明接在最後一則後面，不另發
+    msgs = [m for m in (msg_overview(day, v2, long_p, lv, short_p, picks), msg_v2(v2), msg_short(short_p, odds)) if m]
+    msgs[-1] += "\n\n" + msg_more(long_v, short_v, picks)  # 說明接在訊號的最後一則後面，不另發
+    paper = msg_paper()  # 模擬帳戶獨立一則，放最後
+    if paper:
+        msgs.append(paper)
     out = []
     for m in msgs:
         if m and len(m) > LIMIT:  # 太長就從段落切開

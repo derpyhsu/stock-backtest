@@ -4,7 +4,10 @@
     python -m twscreener.portfolio backtest 2024-12-01    # 同一套規則從某天跑到今天，看淨值曲線與最大回撤
 
 規則（全部寫死，中途不改；換版規則見 專案總覽.md「什麼時候校正規則」）：
-- v5（2026-11-27 晚上起，Derpy 決定）：和 v4 只差處置股那一份。
+- v6（2026-11-27 晚上起，Derpy 決定）：規則和 v5 完全一樣，只改資金比例：營收加速 30%、一年新高 30%、處置股 40%（原本各 1/3）。
+  處置股每筆仍佔那一份的 5%（＝總資金 2%）。依據 results/資金分配/README.md。
+  回測 2023-04-06 從現金開始～2026-11-26：v6 +244.1%／回撤 -19.1%，v5 +215.8%／-18.3%，加權 +147.6%／-28.7%。
+- v5（2026-11-27 定，Derpy 決定）：和 v4 只差處置股那一份。
   a. 處置股改成處置「第 2 天」開盤買（處置首日平均跌 0.85%、56% 收黑；第 2 天買 5 年每年都比首日買好）。
   b. 加「處置跌深」：處置最後一天收盤比處置首日開盤低 15% 以上，隔天（解除當天）開盤買，抱 20 個交易日那天收盤賣；
      每筆和處置股一樣佔那一份的 5%、不設停損，和處置股共用 20 個位子。
@@ -269,9 +272,10 @@ REASON["處置股"] = "公告處置（累計第 {:.0f} 次）；不設停損，�
 REBOUND, REBOUND_DROP, REBOUND_HOLD = "處置跌深", -0.15, 20     # v5：處置期間跌 15% 以上，解除當天開盤買，抱 20 個交易日收盤賣
 REASON[REBOUND] = "處置期間跌 {:.0%}，今天處置結束；不設停損，抱 20 個交易日收盤賣"
 SLEEVES = {"v2": {"營收加速", "逆勢籌碼"}, "s1": {"一年新高"}, "disp": {"處置股", REBOUND}}  # 各份資金管哪些策略；v1 留下的持股算 v2 那份
-SLEEVE_W = {"v3": {"v2": 0.5, "s1": 0.5}, "v4": {"v2": 1 / 3, "s1": 1 / 3, "disp": 1 / 3}, "v5": {"v2": 1 / 3, "s1": 1 / 3, "disp": 1 / 3}}
+SLEEVE_W = {"v3": {"v2": 0.5, "s1": 0.5}, "v4": {"v2": 1 / 3, "s1": 1 / 3, "disp": 1 / 3}, "v5": {"v2": 1 / 3, "s1": 1 / 3, "disp": 1 / 3},
+            "v6": {"v2": 0.3, "s1": 0.3, "disp": 0.4}}
 SLEEVE_MAX = {"disp": 20}            # 處置股那份最多 20 檔（其他 MAX_HOLD）
-DISP_W = 0.05                        # 處置股每筆佔那一份資金的 5%（＝總資金約 1.7%）
+DISP_W = 0.05                        # 處置股每筆佔那一份資金的 5%（v6 那一份是 40%，＝總資金 2%；v4、v5 是約 1.7%）
 _disp = {}
 
 
@@ -363,12 +367,12 @@ def _names(sig):
 def run(days, acct, inputs, version=None):
     raw, adj, opn, vol, raw_open, sig, ctx, ind = inputs
     ver = version or VERSION
-    v2 = ver in ("v2", "v3", "v4", "v5")
+    v2 = ver in ("v2", "v3", "v4", "v5", "v6")
     acct.sleeve_w = SLEEVE_W.get(ver, SLEEVE_W["v3"])
     if v2:
         taiex, names = load_market_index()["taiex"], _names(sig)
     last_close = raw.ffill()   # 停牌幾天後才分割的，要和停牌前最後一個收盤比
-    ma_ext = adj.rolling(EXT_MA).mean() if ver in ("v4", "v5") and EXTEND else None
+    ma_ext = adj.rolling(EXT_MA).mean() if ver in ("v4", "v5", "v6") and EXTEND else None
     for d in days:
         i = raw.index.get_loc(d)
         if i > 0 and len(acct.pos):  # 分割、減資：開盤價和昨收差超過漲跌幅限制，不是真的漲跌，股數和成本跟著換算
@@ -379,12 +383,12 @@ def run(days, acct, inputs, version=None):
                     acct.pos.loc[ix, ["entry", "stop"]] = [h["entry"] * f, h["stop"] * f]
                     acct.pos.loc[ix, "shares"] = int(round(h["shares"] / f))
         acct.execute(d, raw_open.loc[d], raw.iloc[i - 1] if i > 0 else None)
-        if ver in ("v3", "v4", "v5"):
+        if ver in ("v3", "v4", "v5", "v6"):
             c, _ = pead.pick(d, sig, ctx, raw, adj, vol, ind, taiex, names)
             parts = [c.assign(sleeve="v2") if len(c) else c, s1_pick(d, sig, raw, adj, vol, ind, names)]
             if ver == "v4":
                 parts.append(disp_pick(d, raw, vol, ind, names))
-            elif ver == "v5":
+            elif ver in ("v5", "v6"):
                 parts.append(disp_pick(d, raw, vol, ind, names, delay=True))
                 parts.append(rebound_pick(d, raw, raw_open, vol, ind, names))
             parts = [x for x in parts if len(x)]
@@ -409,9 +413,9 @@ def stats(nav, taiex):
 
 
 # 校正規則（2026-11-23 定）。v4 門檻來自 2023-01～2026-11 的 v4 回測（scripts/v3_backtest.py，1,381 筆，results/持有天數/v4_trades.csv）
-VERSION = "v5"                         # v1 用到 2026-11-23；v2 11-24～11-26；v3 只在 11-26 白天；v4（營收加速、一年新高、處置股各 1/3）11-26 晚上；v5（處置股第 2 天買＋處置跌深）從 2026-11-27 晚上起
+VERSION = "v6"                         # v1 用到 2026-11-23；v2 11-24～11-26；v3 只在 11-26 白天；v4（營收加速、一年新高、處置股各 1/3）11-26 晚上；v5（處置股第 2 天買＋處置跌深）只在 2026-11-27 白天（沒跑過每晚更新）；v6（比例改 30／30／40）從 2026-11-27 晚上起
 EXTEND = True                          # v4 的續抱規則（2026-11-26 晚上起），回測最差回撤 -19.0%
-DD_WATCH, DD_STOP = -0.14, -0.21      # v4 回測最差回撤 -17.7%（加續抱 -19.0%）；v5 回測最差 -18.3%，門檻不變
+DD_WATCH, DD_STOP = -0.14, -0.21      # v4 回測最差回撤 -17.7%（加續抱 -19.0%）；v5 回測最差 -18.3%、v6 -19.1%，門檻不變
 STREAK_WATCH, STREAK_STOP = 20, 30     # 連虧筆數：重抽 99 百分位 14，但處置股會在急跌時一起賠，回測實際最長 26，所以注意 20、暫停 30
 ROLL_N, ROLL_MIN = 30, -0.020          # 最近 30 筆平均報酬低於 v4 回測重抽第 5 百分位
 
