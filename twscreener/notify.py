@@ -10,6 +10,7 @@
 """
 import html
 import json
+import time
 import os
 import sys
 import urllib.parse
@@ -35,11 +36,16 @@ def _api(method, **params):
         raise SystemExit("沒有 TELEGRAM_BOT_TOKEN，略過推播")
     data = urllib.parse.urlencode(params).encode() if params else None
     req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=data)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:  # 錯誤訊息裡不會有 token，只印 Telegram 的說明
-        raise SystemExit(f"Telegram {method} 失敗：HTTP {e.code} {e.read().decode(errors='replace')[:200]}")
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:  # 錯誤訊息裡不會有 token，只印 Telegram 的說明
+            raise SystemExit(f"Telegram {method} 失敗：HTTP {e.code} {e.read().decode(errors='replace')[:200]}")
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:  # 連線被重設：等一下再試，不印網址（裡面有 token）
+            if attempt == 3:
+                raise SystemExit(f"Telegram {method} 失敗：連線錯誤 {type(e).__name__}")
+            time.sleep(5 * (attempt + 1))
 
 
 def _env_value(key):
