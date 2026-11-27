@@ -4,6 +4,12 @@
     python -m twscreener.portfolio backtest 2024-12-01    # 同一套規則從某天跑到今天，看淨值曲線與最大回撤
 
 規則（全部寫死，中途不改；換版規則見 專案總覽.md「什麼時候校正規則」）：
+- v5（2026-11-27 晚上起，Derpy 決定）：和 v4 只差處置股那一份。
+  a. 處置股改成處置「第 2 天」開盤買（處置首日平均跌 0.85%、56% 收黑；第 2 天買 5 年每年都比首日買好）。
+  b. 加「處置跌深」：處置最後一天收盤比處置首日開盤低 15% 以上，隔天（解除當天）開盤買，抱 20 個交易日那天收盤賣；
+     每筆和處置股一樣佔那一份的 5%、不設停損，和處置股共用 20 個位子。
+  回測 2023-04-06 從現金開始～2026-11-26：v5 +208.2%／回撤 -18.3%，v4 +155.9%／-18.1%，加權 +147.6%／-28.7%
+  （scripts/disposition_rebound_account_test.py 的 Q；依據 results/規則依據/README.md、results/處置股出場/README.md）。
 - 選股 v4（2026-11-26 起，Derpy 決定：不求贏大盤，要正報酬、年化兩成左右、常有進出）：資金分三份，各 1/3，各自像獨立帳戶。
   1. v2 月營收加速（twscreener/pead.py，每月 11 號後第一個交易日出訊號），最多 10 檔，停損 -15%、60 天。
   2. S1 一年新高（s1_pick，天天選），最多 10 檔，停損 -15%、60 天。
@@ -99,7 +105,8 @@ class Account:
         # 處置股：處置最後一天收盤賣（前一晚就知道，當天收盤前下單）；收盤跌停賣不掉就隔天開盤賣
         late = set()
         for idx, h in self.pos.iterrows():
-            if pd.isna(h["exit_date"]) or str(day.date()) < str(h["exit_date"])[:10]:
+            reb = h["strategy"] == REBOUND
+            if (reb and h["days"] < REBOUND_HOLD) or (not reb and (pd.isna(h["exit_date"]) or str(day.date()) < str(h["exit_date"])[:10])):
                 continue
             c = close.get(h["stock_id"], np.nan)
             pc = prev.get(h["stock_id"], np.nan) if prev is not None else np.nan
@@ -111,7 +118,8 @@ class Account:
             self.cash += h["shares"] * c * (1 - FEE - TAX)
             self.trades.append({"賣出日": day.date(), "stock_id": h["stock_id"], "name": h["name"], "strategy": h["strategy"],
                                 "買進日": h["entry_date"], "買價": h["entry"], "賣價": c, "股數": h["shares"],
-                                "報酬": c * (1 - FEE - TAX) / (h["entry"] * (1 + FEE)) - 1, "原因": "處置結束"})
+                                "報酬": c * (1 - FEE - TAX) / (h["entry"] * (1 + FEE)) - 1,
+                                "原因": f"跌深滿 {REBOUND_HOLD} 天" if reb else "處置結束"})
             self.pos = self.pos.drop(idx)
         self.pos = self.pos.reset_index(drop=True)
         self.review = []
@@ -119,7 +127,9 @@ class Account:
             c = close.get(h["stock_id"], np.nan)
             why, basis, gap = None, "", np.nan
             if h["stock_id"] in late:
-                why = "處置結束（跌停順延）"
+                why = f"跌深滿 {REBOUND_HOLD} 天（跌停順延）" if h["strategy"] == REBOUND else "處置結束（跌停順延）"
+            elif h["strategy"] == REBOUND:
+                basis = f"處置跌深，第 {h['days']}/{REBOUND_HOLD} 天，滿 {REBOUND_HOLD} 天那天收盤賣，不設停損"
             elif pd.notna(h["exit_date"]):
                 basis = f"處置股，{str(h['exit_date'])[:10]} 收盤賣"
             elif np.isfinite(c) and c <= h["stop"]:
@@ -145,8 +155,8 @@ class Account:
             self.review.append({"date": day.date(), "stock_id": h["stock_id"], "name": h["name"], "strategy": h["strategy"],
                                 "買進日": h["entry_date"], "持有天數": h["days"], "目前報酬": round(ret, 4) if np.isfinite(ret) else np.nan,
                                 "決定": "明天開盤賣" if why else "續抱", "依據": why or basis,
-                                "停損價": h["stop"] if pd.isna(h["exit_date"]) else np.nan,
-                                "離停損": round(c / h["stop"] - 1, 4) if np.isfinite(c) and pd.isna(h["exit_date"]) and h["stop"] > 0 else np.nan,
+                                "停損價": h["stop"] if pd.isna(h["exit_date"]) and h["strategy"] != REBOUND else np.nan,
+                                "離停損": round(c / h["stop"] - 1, 4) if np.isfinite(c) and pd.isna(h["exit_date"]) and h["strategy"] != REBOUND and h["stop"] > 0 else np.nan,
                                 "離60日線": round(gap, 4) if np.isfinite(gap) else np.nan,
                                 "60日線價": round(c / (1 + gap), 2) if np.isfinite(gap) and np.isfinite(c) else np.nan})
         rows = [{"date": day.date(), "side": "賣", "stock_id": h["stock_id"], "name": h["name"], "strategy": h["strategy"],
@@ -256,21 +266,35 @@ def _inputs():
 
 REASON = {"營收加速": "月營收年增比前 3 個月平均多 {:.0%}，創 12 個月新高", "一年新高": "收盤創一年新高，近 20 日漲 {:+.0%}"}
 REASON["處置股"] = "公告處置（累計第 {:.0f} 次）；不設停損，處置最後一天收盤賣"
-SLEEVES = {"v2": {"營收加速", "逆勢籌碼"}, "s1": {"一年新高"}, "disp": {"處置股"}}  # 各份資金管哪些策略；v1 留下的持股算 v2 那份
-SLEEVE_W = {"v3": {"v2": 0.5, "s1": 0.5}, "v4": {"v2": 1 / 3, "s1": 1 / 3, "disp": 1 / 3}}
+REBOUND, REBOUND_DROP, REBOUND_HOLD = "處置跌深", -0.15, 20     # v5：處置期間跌 15% 以上，解除當天開盤買，抱 20 個交易日收盤賣
+REASON[REBOUND] = "處置期間跌 {:.0%}，今天處置結束；不設停損，抱 20 個交易日收盤賣"
+SLEEVES = {"v2": {"營收加速", "逆勢籌碼"}, "s1": {"一年新高"}, "disp": {"處置股", REBOUND}}  # 各份資金管哪些策略；v1 留下的持股算 v2 那份
+SLEEVE_W = {"v3": {"v2": 0.5, "s1": 0.5}, "v4": {"v2": 1 / 3, "s1": 1 / 3, "disp": 1 / 3}, "v5": {"v2": 1 / 3, "s1": 1 / 3, "disp": 1 / 3}}
 SLEEVE_MAX = {"disp": 20}            # 處置股那份最多 20 檔（其他 MAX_HOLD）
 DISP_W = 0.05                        # 處置股每筆佔那一份資金的 5%（＝總資金約 1.7%）
 _disp = {}
 
 
-def disp_pick(day, raw, vol, ind, names):
-    """v4 的第三份：當天收盤後公告處置的股票，隔天（處置第一天）開盤買，處置最後一天收盤賣。
-    資料 data/disposition.csv（scripts/fetch_disposition.py）。回測見 results/大盤以外/README.md。"""
+def _disp_events():
     if "d" not in _disp:
         f = RESULTS.parent / "data" / "disposition.csv"
-        d = pd.read_csv(f, dtype={"stock_id": str}, parse_dates=["announce", "end"]) if f.exists() else pd.DataFrame(columns=["announce"])
+        d = pd.read_csv(f, dtype={"stock_id": str}, parse_dates=["announce", "start", "end"]) if f.exists() else pd.DataFrame(columns=["announce", "start", "end"])
         _disp["d"] = d[d["stock_id"].str.fullmatch(r"\d{4}")] if len(d) else d
-    d = _disp["d"]
+    return _disp["d"]
+
+
+def disp_pick(day, raw, vol, ind, names, delay=False):
+    """第三份：當天收盤後公告處置的股票，隔天（處置第一天）開盤買，處置最後一天收盤賣。
+    delay=True（v5）：處置第一天收盤後才排單，第 2 天開盤買；流動性仍看公告那天，價格用處置第一天收盤。
+    資料 data/disposition.csv（scripts/fetch_disposition.py）。回測見 results/大盤以外/README.md、results/規則依據/README.md。"""
+    if delay:
+        if day not in raw.index or raw.index.get_loc(day) == 0:
+            return pd.DataFrame()
+        g = disp_pick(raw.index[raw.index.get_loc(day) - 1], raw, vol, ind, names)
+        if len(g):
+            g = g[g["exit_date"] > str(day.date())].assign(close_at_pick=lambda x: raw.loc[day, x["stock_id"]].values).dropna(subset=["close_at_pick"])
+        return g.reset_index(drop=True) if len(g) else pd.DataFrame()
+    d = _disp_events()
     g = d[d["announce"] == day].drop_duplicates("stock_id", keep="last")
     if g.empty or day not in raw.index:
         return pd.DataFrame()
@@ -283,6 +307,33 @@ def disp_pick(day, raw, vol, ind, names):
                          "industry": [ind.get(x, "其他") for x in g["stock_id"]], "score": g["count"].astype(float).values, "stop": -0.999,
                          "close_at_pick": raw.loc[day, g["stock_id"]].values, "sleeve": "disp", "weight": DISP_W,
                          "exit_date": g["end"].dt.strftime("%Y-%m-%d").values})
+
+
+def rebound_pick(day, raw, raw_open, vol, ind, names):
+    """v5 處置跌深：今天是處置最後一個交易日，收盤比處置首日開盤低 REBOUND_DROP 以上 → 隔天（解除當天）開盤買，
+    抱 REBOUND_HOLD 個交易日那天收盤賣（Account.plan 用持有天數判斷）。回測見 results/處置股出場/README.md 第五、六節。"""
+    d = _disp_events()
+    if not len(d) or day not in raw.index:
+        return pd.DataFrame()
+    i = raw.index.get_loc(day)
+    prev = raw.index[i - 1] if i > 0 else pd.Timestamp("1900-01-01")
+    g = d[(d["end"] <= day) & (d["end"] > prev) & d["start"].isin(raw_open.index) & d["stock_id"].isin(raw.columns)].drop_duplicates("stock_id", keep="last")
+    if g.empty:
+        return pd.DataFrame()
+    liquid = (vol.iloc[max(0, i - 19):i + 1].mean() >= 500) & (raw.iloc[i] >= 10)
+    rows = []
+    for r in g.itertuples():
+        o, c = raw_open.at[r.start, r.stock_id], raw.at[day, r.stock_id]
+        if np.isfinite(o) and np.isfinite(c) and o > 0 and c / o - 1 <= REBOUND_DROP and bool(liquid.get(r.stock_id, False)):
+            rows.append((r.stock_id, c / o - 1, c))
+    if not rows:
+        return pd.DataFrame()
+    ids = [x[0] for x in rows]
+    return pd.DataFrame({"stock_id": ids, "name": [names.get(x, x) for x in ids], "strategy": REBOUND,
+                         "industry": [ind.get(x, "其他") for x in ids], "score": [x[1] for x in rows], "stop": -0.999,
+                         "close_at_pick": [x[2] for x in rows], "sleeve": "disp", "weight": DISP_W, "exit_date": np.nan})
+
+
 S1_STOP = -0.15
 
 
@@ -312,12 +363,12 @@ def _names(sig):
 def run(days, acct, inputs, version=None):
     raw, adj, opn, vol, raw_open, sig, ctx, ind = inputs
     ver = version or VERSION
-    v2 = ver in ("v2", "v3", "v4")
+    v2 = ver in ("v2", "v3", "v4", "v5")
     acct.sleeve_w = SLEEVE_W.get(ver, SLEEVE_W["v3"])
     if v2:
         taiex, names = load_market_index()["taiex"], _names(sig)
     last_close = raw.ffill()   # 停牌幾天後才分割的，要和停牌前最後一個收盤比
-    ma_ext = adj.rolling(EXT_MA).mean() if ver == "v4" and EXTEND else None
+    ma_ext = adj.rolling(EXT_MA).mean() if ver in ("v4", "v5") and EXTEND else None
     for d in days:
         i = raw.index.get_loc(d)
         if i > 0 and len(acct.pos):  # 分割、減資：開盤價和昨收差超過漲跌幅限制，不是真的漲跌，股數和成本跟著換算
@@ -328,11 +379,14 @@ def run(days, acct, inputs, version=None):
                     acct.pos.loc[ix, ["entry", "stop"]] = [h["entry"] * f, h["stop"] * f]
                     acct.pos.loc[ix, "shares"] = int(round(h["shares"] / f))
         acct.execute(d, raw_open.loc[d], raw.iloc[i - 1] if i > 0 else None)
-        if ver in ("v3", "v4"):
+        if ver in ("v3", "v4", "v5"):
             c, _ = pead.pick(d, sig, ctx, raw, adj, vol, ind, taiex, names)
             parts = [c.assign(sleeve="v2") if len(c) else c, s1_pick(d, sig, raw, adj, vol, ind, names)]
             if ver == "v4":
                 parts.append(disp_pick(d, raw, vol, ind, names))
+            elif ver == "v5":
+                parts.append(disp_pick(d, raw, vol, ind, names, delay=True))
+                parts.append(rebound_pick(d, raw, raw_open, vol, ind, names))
             parts = [x for x in parts if len(x)]
             c = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
         elif v2:
@@ -355,9 +409,9 @@ def stats(nav, taiex):
 
 
 # 校正規則（2026-11-23 定）。v4 門檻來自 2023-01～2026-11 的 v4 回測（scripts/v3_backtest.py，1,381 筆，results/持有天數/v4_trades.csv）
-VERSION = "v4"                         # v1 用到 2026-11-23；v2 11-24～11-26；v3 只在 11-26 白天；v4（營收加速、一年新高、處置股各 1/3）從 2026-11-26 晚上起
+VERSION = "v5"                         # v1 用到 2026-11-23；v2 11-24～11-26；v3 只在 11-26 白天；v4（營收加速、一年新高、處置股各 1/3）11-26 晚上；v5（處置股第 2 天買＋處置跌深）從 2026-11-27 晚上起
 EXTEND = True                          # v4 的續抱規則（2026-11-26 晚上起），回測最差回撤 -19.0%
-DD_WATCH, DD_STOP = -0.14, -0.21      # v4 回測最差回撤 -17.7%（加續抱 -19.0%，門檻不變）
+DD_WATCH, DD_STOP = -0.14, -0.21      # v4 回測最差回撤 -17.7%（加續抱 -19.0%）；v5 回測最差 -18.3%，門檻不變
 STREAK_WATCH, STREAK_STOP = 20, 30     # 連虧筆數：重抽 99 百分位 14，但處置股會在急跌時一起賠，回測實際最長 26，所以注意 20、暫停 30
 ROLL_N, ROLL_MIN = 30, -0.020          # 最近 30 筆平均報酬低於 v4 回測重抽第 5 百分位
 

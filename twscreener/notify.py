@@ -21,6 +21,8 @@ import pandas as pd
 from .market import load_market_index
 from .sizing import size
 
+REBOUND, REBOUND_HOLD = "處置跌深", 20   # 和 portfolio.py 的 REBOUND、REBOUND_HOLD 一致
+
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS = ROOT / "results"
 ENV = ROOT / ".env"
@@ -231,14 +233,18 @@ def msg_overview(day, v2, long_p, lv, short_p, picks):
     if regime:
         lines.append(f"大盤 <b>{e(regime)}</b>" + (f"・距高點 {dd:+.0%}" if dd is not None else ""))
     lines.append(f"<i>適用 {day_label(nxt)}開盤；開盤就跌破停損的不要進場</i>")
-    lines += ["", "🏛 <b>模擬帳戶 v4 明天買進</b>・營收加速、一年新高、處置股各 1/3 資金"]
+    lines += ["", "🏛 <b>模擬帳戶 v5 明天買進</b>・營收加速、一年新高、處置股各 1/3 資金"]
     if len(v2):
         for i, r in enumerate(v2.itertuples()):
             xd = getattr(r, "exit_date", None)
-            tail = f"{md(xd)} 收盤賣" if isinstance(xd, str) and xd else f"停損 {price(r.stop)}"
+            tail = (f"抱 {REBOUND_HOLD} 個交易日收盤賣" if r.strategy == REBOUND
+                    else f"{md(xd)} 收盤賣" if isinstance(xd, str) and xd else f"停損 {price(r.stop)}")
             lines.append(f"{CIRCLE[i % len(CIRCLE)]} <b>{e(r.name)}</b>　{e(r.strategy)}・{tail}")
     else:
-        lines.append(f"明天沒有新買進（今天沒有新的處置公告和一年新高訊號，或那一份資金已滿；營收加速下次約 {day_label(next_v2_day(day))}）。持股照規則抱，見下面模擬帳戶。")
+        lines.append(f"明天沒有新買進（今天沒有處置第一天、處置跌深和一年新高訊號，或那一份資金已滿；營收加速下次約 {day_label(next_v2_day(day))}）。持股照規則抱，見下面模擬帳戶。")
+    ann = announced_today(day)
+    if ann:
+        lines.append(f"📌 今天公告處置（處置第 2 天開盤才買，明晚排單）：{e('、'.join(ann[:8]))}" + (f" 等 {len(ann)} 檔" if len(ann) > 8 else ""))
     if len(short_p):
         lines += ["", "⚡ <b>短線</b>・抱 5～10 天"]
         for i, r in enumerate(short_p.itertuples()):
@@ -276,11 +282,12 @@ def msg_v2(v2):
         return None
     files = sorted((RESULTS.parent / "data" / "daily").glob("*.csv"))
     close = pd.read_csv(files[-1], dtype={"stock_id": str}).set_index("stock_id")["close"] if files else pd.Series(dtype=float)
-    out = ["🏛 <b>模擬帳戶 v4 明天買進</b>・開盤買。營收加速、一年新高：跌破停損或滿 60 天賣，不設停利。處置股：不設停損，處置最後一天收盤賣"]
+    out = [f"🏛 <b>模擬帳戶 v5 明天買進</b>・開盤買。營收加速、一年新高：跌破停損或滿 60 天賣，不設停利。處置股（處置第 2 天買）：不設停損，處置最後一天收盤賣。處置跌深：不設停損，抱 {REBOUND_HOLD} 個交易日收盤賣"]
     for i, r in enumerate(v2.itertuples()):
         c = close.get(r.stock_id, float("nan"))
         xd = getattr(r, "exit_date", None)
-        head = (f"收盤 {price(c)}　⏱ {md(xd)} 收盤賣・不設停損" if isinstance(xd, str) and xd
+        head = (f"收盤 {price(c)}　⏱ 抱 {REBOUND_HOLD} 個交易日收盤賣・不設停損" if r.strategy == REBOUND
+                else f"收盤 {price(c)}　⏱ {md(xd)} 收盤賣・不設停損" if isinstance(xd, str) and xd
                 else f"收盤 {price(c)}　🛑 停損 <b>{price(r.stop)}</b>" + (f" {pct(r.stop, c)}" if c == c else ""))
         body = [head,
                 f"💰 模擬帳戶（100 萬起）買 {int(r.shares):,} 股，約 {r.shares * c / 1e4:.0f} 萬" if c == c else ""]
@@ -337,6 +344,8 @@ def msg_paper():
         for r in orders.itertuples():
             if r.side == "賣":
                 lines.append(f"・🔴 賣 <b>{e(r.name)}</b> {int(r.shares):,} 股（{e(r.reason)}）")
+            elif r.strategy == REBOUND:
+                lines.append(f"・🟢 買 <b>{e(r.name)}</b> {int(r.shares):,} 股（處置跌深，不設停損，抱 {REBOUND_HOLD} 個交易日收盤賣；開盤漲停就不買）")
             elif isinstance(getattr(r, "exit_date", None), str) and r.exit_date:
                 lines.append(f"・🟢 買 <b>{e(r.name)}</b> {int(r.shares):,} 股（處置股，不設停損，{md(r.exit_date)} 收盤賣；開盤漲停就不買）")
             else:
@@ -346,14 +355,26 @@ def msg_paper():
     due = []
     if len(pos) and "exit_date" in pos.columns:
         nxt = next_trading_day(pd.Timestamp(last["date"]))
-        due = [r for r in pos.itertuples() if isinstance(r.exit_date, str) and r.exit_date and pd.Timestamp(r.exit_date) <= nxt]
+        due = [r for r in pos.itertuples() if (r.strategy == REBOUND and int(r.days) + 1 >= REBOUND_HOLD)
+               or (r.strategy != REBOUND and isinstance(r.exit_date, str) and r.exit_date and pd.Timestamp(r.exit_date) <= nxt)]
     if due:
-        lines.append("明天收盤前賣（處置最後一天）：")
+        lines.append(f"明天收盤前賣（處置最後一天，或處置跌深滿 {REBOUND_HOLD} 天）：")
         for r in due:
             lines.append(f"・🔴 賣 <b>{e(r.name)}</b> {int(r.shares):,} 股")
     if not len(orders) and not due:
         lines.append("明天沒有買賣。")
     return "\n".join(lines)
+
+
+def announced_today(day):
+    """今天收盤後公告處置的普通股名稱（v5 第 2 天才買，先預告）。"""
+    try:
+        f = RESULTS.parent / "data" / "disposition.csv"
+        d = pd.read_csv(f, dtype={"stock_id": str}, parse_dates=["announce"])
+        d = d[(d["announce"] == pd.Timestamp(day).normalize()) & d["stock_id"].str.fullmatch(r"\d{4}")]
+        return list(dict.fromkeys(d["name"].astype(str)))
+    except Exception:
+        return []
 
 
 def md(s):
@@ -379,7 +400,10 @@ def paper_holdings(d, day):
             gap = c / r.stop - 1 if c == c else float("nan")
             flag = "⚠️" if gap == gap and gap < 0.05 else ("🟢" if ret == ret and ret > 0 else "🔻")
             xd = getattr(r, "exit_date", None)
-            if isinstance(xd, str) and xd:   # 處置股：不設停損，處置最後一天收盤賣
+            if r.strategy == REBOUND:        # 處置跌深：不設停損，抱滿 REBOUND_HOLD 個交易日收盤賣
+                flag = "🟢" if ret == ret and ret > 0 else "🔻"
+                rows.append(f"{flag} <b>{e(r.name)}</b> {price(r.entry)}→{price(c)} <b>{ret:+.1%}</b>・處置跌深，第 {int(r.days)}/{REBOUND_HOLD} 天，滿 {REBOUND_HOLD} 天收盤賣")
+            elif isinstance(xd, str) and xd:   # 處置股：不設停損，處置最後一天收盤賣
                 flag = "🟢" if ret == ret and ret > 0 else "🔻"
                 rows.append(f"{flag} <b>{e(r.name)}</b> {price(r.entry)}→{price(c)} <b>{ret:+.1%}</b>・處置股，{md(xd)} 收盤賣")
             else:
@@ -412,7 +436,7 @@ def paper_watch(d):
         return []
     rows = []
     for r in rv[rv["決定"] == "續抱"].itertuples():
-        if r.strategy == "處置股":
+        if r.strategy in ("處置股", REBOUND):
             continue
         days, gs, gm, ret = int(r.持有天數), r.離停損, r.離60日線, r.目前報酬
         ma = f"目前比 60 日線（約 {price(r._13)}）{'高' if gm >= 0 else '低'} {abs(gm):.1%}" if gm == gm else "沒有 60 日線資料"
@@ -441,8 +465,9 @@ def msg_more(long_v, short_v, picks):
     lines = []
     lines.append("📖 <b>怎麼看</b>")
     lines.append("<blockquote expandable>"
-                 "v4＝資金分三份。營收加速（月營收年增 30% 以上且在加速、創 12 個月新高、股價已比大盤多漲 5%，每月一次）和一年新高（收盤創一年新高，天天選）：各最多 10 檔，停損 -15%，不設停利；滿 60 天時收盤還在 60 日線上就續抱，跌破 60 日線或滿 120 天才賣。"
-                 "處置股（被公告處置的股票，處置第一天開盤買、最後一天收盤賣，約 5～10 天）：每筆只放總資金約 1.7%，不設停損，最多 20 檔；處置股是分盤撮合，下單可能要預收款券。\n"
+                 "v5＝資金分三份。營收加速（月營收年增 30% 以上且在加速、創 12 個月新高、股價已比大盤多漲 5%，每月一次）和一年新高（收盤創一年新高，天天選）：各最多 10 檔，停損 -15%，不設停利；滿 60 天時收盤還在 60 日線上就續抱，跌破 60 日線或滿 120 天才賣。"
+                 "處置股（被公告處置的股票，處置第 2 天開盤買、最後一天收盤賣，約 5～10 天；處置第一天平均是跌的，所以等一天）：每筆只放總資金約 1.7%，不設停損，最多 20 檔；處置股是分盤撮合，下單可能要預收款券。"
+                 "處置跌深（處置期間跌 15% 以上的，解除當天開盤買，抱 20 個交易日收盤賣）：每筆一樣約 1.7%、不設停損，和處置股共用 20 個位子。\n"
                  "觀察名單的目標＝同組歷史報酬中位數，樂觀＝前 25%，當參考，不要掛單賣（回測發現固定停利會砍掉大漲股）。\n"
                  "停損＝八成賺錢的歷史訊號沒跌破的價位，盤勢亂時依波動放寬；短線停損＝近 20 日平均波動 × 3。\n"
                  "買多少＝營收加速、一年新高每檔打到停損最多虧總資金約 0.33%、單檔最多約 6.7%（資金分三份各算）；處置股每筆約 1.7%；短線每檔最多虧 1%、單檔 20%。依自己的資金等比例換算。\n"
